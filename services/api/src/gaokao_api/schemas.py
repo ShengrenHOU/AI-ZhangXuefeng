@@ -12,6 +12,13 @@ class SessionStartResponse(BaseModel):
     dossier: StudentDossier
 
 
+class SessionSnapshotResponse(BaseModel):
+    thread_id: str
+    state: str
+    dossier: StudentDossier
+    messages: list[dict]
+
+
 class ChatMessageRequest(BaseModel):
     content: str = Field(min_length=1)
 
@@ -59,4 +66,3 @@ class SourceRecordResponse(BaseModel):
     source_url: str
     fetched_at: str
     summary: str
-

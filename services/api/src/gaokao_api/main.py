@@ -8,6 +8,7 @@ from recommendation_core.models import RecommendationRequest, StudentDossier
 
 from .config import settings
 from .db import Base, engine
+from .llm import ArkCodingPlanClient
 from .repository import FeedbackRepository, SessionRepository
 from .schemas import (
     ChatMessageRequest,
@@ -16,6 +17,7 @@ from .schemas import (
     CompareResponse,
     ExportSummaryResponse,
     FeedbackRequest,
+    SessionSnapshotResponse,
     SessionStartResponse,
     SourceRecordResponse,
 )
@@ -36,11 +38,22 @@ recommendation_core = RecommendationCore()
 state_machine = SessionStateMachine(
     repository=knowledge_repo,
     recommendation_core=recommendation_core,
+    planner_client=ArkCodingPlanClient(),
     province=settings.province,
     target_year=settings.target_year,
 )
 session_repo = SessionRepository()
 feedback_repo = FeedbackRepository()
+
+
+@app.get("/healthz")
+def healthcheck() -> dict:
+    return {
+        "status": "ok",
+        "model": settings.ark_model,
+        "live_llm_enabled": settings.enable_live_llm,
+        "knowledge_root": str(settings.knowledge_path),
+    }
 
 
 @app.post("/api/session/start", response_model=SessionStartResponse)
@@ -76,6 +89,19 @@ def get_dossier(thread_id: str) -> StudentDossier:
     if existing is None:
         raise HTTPException(status_code=404, detail="thread not found")
     return StudentDossier(**existing.dossier)
+
+
+@app.get("/api/session/{thread_id}", response_model=SessionSnapshotResponse)
+def get_session(thread_id: str) -> SessionSnapshotResponse:
+    existing = session_repo.get(thread_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="thread not found")
+    return SessionSnapshotResponse(
+        thread_id=existing.thread_id,
+        state=existing.state,
+        dossier=StudentDossier(**existing.dossier),
+        messages=existing.messages,
+    )
 
 
 @app.post("/api/recommendation/run")

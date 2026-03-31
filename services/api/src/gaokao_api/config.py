@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     ark_api_key: str | None = None
     ark_model: str = "minimax-m2.5"
     ark_base_url: str = "https://ark.cn-beijing.volces.com/api/coding/v3"
+    enable_live_llm: bool = False
     knowledge_root: str = "packages/knowledge/data"
     province: str = "henan"
     target_year: int = 2026

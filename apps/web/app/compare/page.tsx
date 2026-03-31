@@ -1,6 +1,25 @@
 import Link from "next/link";
 
-export default function ComparePage() {
+import { comparePrograms } from "../../lib/api";
+
+export const dynamic = "force-dynamic";
+
+export default async function ComparePage() {
+  let result:
+    | {
+        leftProgramId: string;
+        rightProgramId: string;
+        summary: string;
+        sourceIds: string[];
+      }
+    | null = null;
+
+  try {
+    result = await comparePrograms("henan-tech-electrical", "xinyang-normal-education");
+  } catch {
+    result = null;
+  }
+
   return (
     <main className="shell">
       <section className="panel">
@@ -9,19 +28,26 @@ export default function ComparePage() {
           Compare two programs without losing source context.
         </h1>
         <p className="lead">
-          Phase 1 keeps compare simple: the API already exposes `POST /api/recommendation/compare`, and the web shell reserves
-          this page for school-program pair analysis. The finished UI should show differences in fit, risk, tuition, and source coverage.
+          {result ? result.summary : "The compare API is not reachable yet. Once the backend is deployed, this page will fetch a live comparison on each request."}
         </p>
         <div className="card">
-          <strong>Planned compare dimensions</strong>
+          <strong>Current compare contract</strong>
           <div style={{ marginTop: 12 }}>
-            <span className="tag">fit reasons</span>
-            <span className="tag">risk warnings</span>
-            <span className="tag">tuition</span>
-            <span className="tag">subject requirements</span>
+            <span className="tag">{result?.leftProgramId ?? "left program"}</span>
+            <span className="tag">{result?.rightProgramId ?? "right program"}</span>
+            <span className="tag">fit reasoning</span>
             <span className="tag">source overlap</span>
           </div>
         </div>
+        {result ? (
+          <div className="link-row">
+            {result.sourceIds.map((sourceId) => (
+              <Link className="button secondary" href={`/sources/${sourceId}`} key={sourceId}>
+                {sourceId}
+              </Link>
+            ))}
+          </div>
+        ) : null}
         <div className="link-row">
           <Link className="button" href="/">
             Back to home
@@ -31,4 +57,3 @@ export default function ComparePage() {
     </main>
   );
 }
-
