@@ -48,7 +48,15 @@ class ArkCodingPlanClient:
     def is_configured(self) -> bool:
         return self._client is not None
 
-    def plan_conversation_action(self, *, dossier: dict[str, Any], user_message: str, missing_fields: list[str]) -> PlannerAction | None:
+    def plan_conversation_action(
+        self,
+        *,
+        dossier: dict[str, Any],
+        user_message: str,
+        missing_fields: list[str],
+        conflicts: list[dict[str, Any]],
+        readiness_level: str,
+    ) -> PlannerAction | None:
         if self._client is None:
             return None
 
@@ -64,6 +72,8 @@ class ArkCodingPlanClient:
                         "current_dossier": dossier,
                         "latest_user_message": user_message,
                         "missing_fields": missing_fields,
+                        "conflicts": conflicts,
+                        "readiness_level": readiness_level,
                     },
                     ensure_ascii=False,
                 ),
@@ -88,16 +98,18 @@ class ArkCodingPlanClient:
 
     def _system_prompt(self, missing_fields: list[str]) -> str:
         return (
-            "You are the planning layer of a gaokao assistant. "
-            "Return one JSON object only. "
-            "Use snake_case keys exactly: action, dossier_patch, next_question, reasoning_summary, source_ids. "
-            "Never invent school or program recommendations. "
-            "Only extract fields directly supported by the user's message. "
-            "If missing_fields is non-empty, prefer action=ask_followup and ask one concise question that targets the highest-priority missing field. "
-            "If missing_fields is empty, use action=explain_results and summarize what the workflow should do next. "
-            "Valid dossier_patch keys are province, target_year, rank, score, subject_combination, major_interests, risk_appetite, family_constraints, summary_notes. "
-            "family_constraints may include annual_budget_cny, city_preference, distance_preference, adjustment_accepted, notes. "
-            f"Current required missing fields list: {missing_fields}. "
-            "Set source_ids to an empty list during planning because recommendation evidence is added later."
+            "你是高考志愿助手的规划层，不是最终推荐器。"
+            "你必须只返回一个 JSON 对象。"
+            "键名必须严格使用 snake_case：action, dossier_patch, next_question, reasoning_summary, source_ids。"
+            "你不能直接给出学校或专业推荐。"
+            "你只能从用户最新一句话中抽取明确支持的 dossier 字段，不要猜。"
+            "如果还有缺失字段，优先使用 action=ask_followup。"
+            "如果存在冲突约束，优先使用 action=confirm_constraints。"
+            "只有缺失字段为空且冲突为空时，才使用 action=explain_results。"
+            "next_question 必须是中文、简短、像成熟 AI 助手的追问，不要工程味。"
+            "reasoning_summary 必须是中文，面向家长可读。"
+            "合法 dossier_patch 字段包括 province, target_year, rank, score, subject_combination, major_interests, risk_appetite, family_constraints, summary_notes。"
+            "family_constraints 可以包含 annual_budget_cny, city_preference, distance_preference, adjustment_accepted, notes。"
+            f"当前缺失字段：{missing_fields}。"
+            "source_ids 在规划阶段保持空数组。"
         )
-

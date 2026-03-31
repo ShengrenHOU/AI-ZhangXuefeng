@@ -9,6 +9,20 @@ export type ConversationActionType =
 export type RecommendationBucket = "reach" | "match" | "safe";
 export type KnowledgePublicationStatus = "draft" | "reviewed" | "published";
 export type SourceKind = "official_fact" | "governed_explainer" | "generated_artifact";
+export type ReadinessLevel = "insufficient_info" | "near_ready" | "ready_for_recommendation";
+
+export interface ConflictNotice {
+  code: string;
+  message: string;
+}
+
+export interface ReadinessState {
+  level: ReadinessLevel;
+  canRecommend: boolean;
+  missingFields: string[];
+  missingLabels: string[];
+  conflicts: ConflictNotice[];
+}
 
 export interface FamilyConstraintSet {
   annualBudgetCny?: number | null;
@@ -40,6 +54,10 @@ export interface RecommendationRequest {
 export interface RecommendationItem {
   schoolId: string;
   programId: string;
+  schoolName: string;
+  programName: string;
+  city: string;
+  tuitionCny: number;
   bucket: RecommendationBucket;
   fitReasons: string[];
   riskWarnings: string[];
@@ -92,5 +110,5 @@ export interface ConversationAction {
   nextQuestion?: string | null;
   reasoningSummary: string;
   sourceIds: string[];
+  readiness?: ReadinessState;
 }
-

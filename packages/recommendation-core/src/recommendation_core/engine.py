@@ -42,6 +42,10 @@ class RecommendationCore:
                 RecommendationDecision(
                     school_id=program["school_id"],
                     program_id=program["program_id"],
+                    school_name=school["name"],
+                    program_name=program["name"],
+                    city=program["city"],
+                    tuition_cny=program["tuition_cny"],
                     bucket=bucket,
                     fit_reasons=fit_reasons,
                     risk_warnings=risks,
@@ -70,24 +74,24 @@ class RecommendationCore:
         if required_subjects and not required_subjects.issubset(dossier_subjects):
             return False, []
         if required_subjects:
-            reasons.append("subject requirements satisfied")
+            reasons.append("选科要求满足")
 
         budget = dossier.family_constraints.annual_budget_cny
         if budget is not None and program["tuition_cny"] > budget:
             return False, []
         if budget is not None:
-            reasons.append("tuition within annual budget")
+            reasons.append("学费在当前家庭预算内")
 
         preferred_cities = dossier.family_constraints.city_preference
         if preferred_cities and program["city"] in preferred_cities:
-            reasons.append("city preference matched")
+            reasons.append("城市偏好匹配")
 
         major_interests = set(dossier.major_interests)
         if major_interests and any(tag in major_interests for tag in program.get("tags", [])):
-            reasons.append("major interest matched")
+            reasons.append("专业兴趣方向匹配")
 
         if not reasons:
-            reasons.append("baseline eligibility passed")
+            reasons.append("基础条件满足当前筛选")
         return True, reasons
 
     def _score_candidate(self, request: RecommendationRequest, program: dict[str, Any]) -> float:
@@ -121,24 +125,24 @@ class RecommendationCore:
         dossier = request.dossier
         risks: list[str] = []
         if dossier.rank and dossier.rank > program["historical_rank"]:
-            risks.append("historical rank line is slightly stronger than the current dossier")
+            risks.append("往年位次要求略高于你当前的位次，冲刺风险会偏大")
         if program["tuition_cny"] >= 6000:
-            risks.append("tuition is relatively high for a public undergraduate option")
+            risks.append("学费在当前候选里偏高，需要结合家庭预算再判断")
         if dossier.family_constraints.adjustment_accepted is False:
-            risks.append("no-adjustment preference reduces fallback space")
-        return risks or ["recommendation still requires final official volunteering review"]
+            risks.append("你不接受调剂，这会进一步压缩保底空间")
+        return risks or ["最终填报前，仍需要和官方规则与招生章程再次核对"]
 
     def _build_fit_reasons(self, request: RecommendationRequest, program: dict[str, Any], school: dict[str, Any]) -> list[str]:
-        reasons = [f"{school['name']} is in {program['city']}"]
+        reasons = [f"{school['name']}位于{program['city']}，与当前地域偏好更容易结合"]
         if request.dossier.risk_appetite == "conservative":
-            reasons.append("bucketing prefers stability for the current risk appetite")
+            reasons.append("你当前偏向稳妥方案，系统会优先保留更稳的候选")
         if request.dossier.family_constraints.distance_preference == "near_home":
-            reasons.append("current routing favors options that are easier for family coordination")
+            reasons.append("你提到希望离家近，系统会优先保留更便于家庭协同的选择")
         return reasons
 
     def _build_parent_summary(self, program_name: str, school_name: str, bucket: str, risks: list[str]) -> str:
-        summary = f"{school_name} · {program_name} is currently classified as {bucket}."
+        bucket_zh = {"reach": "冲", "match": "稳", "safe": "保"}[bucket]
+        summary = f"{school_name}的{program_name}目前被归在“{bucket_zh}”这一档。"
         if risks:
-            summary += f" Main risk: {risks[0]}."
+            summary += f" 当前最需要注意的是：{risks[0]}。"
         return summary
-

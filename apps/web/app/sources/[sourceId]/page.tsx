@@ -32,32 +32,32 @@ export default async function SourceDetailPage({ params }: SourcePageProps) {
   return (
     <main className="shell">
       <section className="panel">
-        <div className="eyebrow">Source detail</div>
+        <div className="section-title">依据详情</div>
         <h1 className="headline" style={{ fontSize: "3rem" }}>
           {source?.title ?? sourceId}
         </h1>
-        <p className="lead">{source?.summary ?? "The source API is not reachable yet. This page will resolve the source record at request time once the backend is online."}</p>
+        <p className="lead">{source?.summary ?? "当前还没有拿到实时来源数据，后端联通后这里会展示来源说明、年份与可信依据。"}</p>
         <div className="dossier-grid">
           <div className="stat">
-            <label>Status</label>
-            <strong>{source?.publicationStatus ?? "unknown"}</strong>
+            <label>发布状态</label>
+            <strong>{source?.publicationStatus ?? "待确认"}</strong>
           </div>
           <div className="stat">
-            <label>Year</label>
-            <strong>{source?.year ?? "pending"}</strong>
+            <label>年份</label>
+            <strong>{source?.year ?? "待确认"}</strong>
           </div>
           <div className="stat">
-            <label>Kind</label>
-            <strong>{source?.kind ?? "pending"}</strong>
+            <label>来源类型</label>
+            <strong>{source?.kind ?? "待确认"}</strong>
           </div>
           <div className="stat">
-            <label>Fetched at</label>
-            <strong>{source?.fetchedAt ?? "pending"}</strong>
+            <label>抓取时间</label>
+            <strong>{source?.fetchedAt ?? "待确认"}</strong>
           </div>
         </div>
         {source ? (
           <div className="card" style={{ marginTop: 20 }}>
-            <strong>Source URL</strong>
+            <strong>原始链接</strong>
             <p className="lead" style={{ marginTop: 10 }}>
               <a href={source.sourceUrl} target="_blank" rel="noreferrer">
                 {source.sourceUrl}
@@ -67,7 +67,7 @@ export default async function SourceDetailPage({ params }: SourcePageProps) {
         ) : null}
         <div className="link-row">
           <Link className="button" href="/">
-            Back to home
+            返回首页
           </Link>
         </div>
       </section>

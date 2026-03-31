@@ -26,6 +26,10 @@ export const demoRecommendation: RecommendationRun = {
     {
       schoolId: "henan-tech",
       programId: "henan-tech-electrical",
+      schoolName: "河南工学院",
+      programName: "电气工程及其自动化",
+      city: "Xinxiang",
+      tuitionCny: 5500,
       bucket: "match",
       fitReasons: [
         "subject requirements satisfied",
@@ -41,6 +45,10 @@ export const demoRecommendation: RecommendationRun = {
     {
       schoolId: "xinyang-normal",
       programId: "xinyang-normal-education",
+      schoolName: "信阳师范大学",
+      programName: "小学教育",
+      city: "Xinyang",
+      tuitionCny: 4400,
       bucket: "safe",
       fitReasons: [
         "baseline eligibility passed",
@@ -54,4 +62,3 @@ export const demoRecommendation: RecommendationRun = {
     }
   ]
 };
-

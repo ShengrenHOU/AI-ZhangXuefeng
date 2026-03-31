@@ -1,4 +1,4 @@
-import type { RecommendationBucket, RecommendationItem } from "@gaokao-mvp/types";
+import type { ConflictNotice, ReadinessLevel, RecommendationBucket, RecommendationItem } from "@gaokao-mvp/types";
 
 export type ApiFamilyConstraints = {
   annual_budget_cny?: number | null;
@@ -38,6 +38,14 @@ export type UiDossier = {
   summaryNotes?: string[];
 };
 
+export type UiReadiness = {
+  level: ReadinessLevel;
+  canRecommend: boolean;
+  missingFields: string[];
+  missingLabels: string[];
+  conflicts: ConflictNotice[];
+};
+
 export type UiRecommendationRun = {
   traceId: string;
   rulesVersion: string;
@@ -51,6 +59,7 @@ export type SessionSnapshot = {
   state: string;
   dossier: UiDossier;
   messages: { role: string; content: string }[];
+  readiness: UiReadiness;
 };
 
 export type ChatResult = {
@@ -58,12 +67,14 @@ export type ChatResult = {
   state: string;
   assistantMessage: string;
   dossier: UiDossier;
+  readiness: UiReadiness;
   recommendation: UiRecommendationRun | null;
   modelAction: {
     action: string;
     nextQuestion?: string | null;
     reasoningSummary: string;
     sourceIds: string[];
+    readiness?: UiReadiness;
   };
 };
 
@@ -109,6 +120,16 @@ function mapDossier(input: ApiDossier): UiDossier {
   };
 }
 
+function mapReadiness(input: any): UiReadiness {
+  return {
+    level: input.level,
+    canRecommend: input.can_recommend,
+    missingFields: input.missing_fields ?? [],
+    missingLabels: input.missing_labels ?? [],
+    conflicts: input.conflicts ?? []
+  };
+}
+
 function mapRecommendation(input: any): UiRecommendationRun {
   return {
     traceId: input.trace_id,
@@ -119,6 +140,10 @@ function mapRecommendation(input: any): UiRecommendationRun {
       (item: any): RecommendationItem => ({
         schoolId: item.school_id,
         programId: item.program_id,
+        schoolName: item.school_name,
+        programName: item.program_name,
+        city: item.city,
+        tuitionCny: item.tuition_cny,
         bucket: item.bucket as RecommendationBucket,
         fitReasons: item.fit_reasons ?? [],
         riskWarnings: item.risk_warnings ?? [],
@@ -173,7 +198,8 @@ export async function startSession(): Promise<SessionSnapshot> {
     threadId: payload.thread_id,
     state: payload.state,
     dossier: mapDossier(payload.dossier),
-    messages: []
+    messages: [],
+    readiness: mapReadiness(payload.readiness)
   };
 }
 
@@ -183,7 +209,8 @@ export async function getSession(threadId: string): Promise<SessionSnapshot> {
     threadId: payload.thread_id,
     state: payload.state,
     dossier: mapDossier(payload.dossier),
-    messages: payload.messages ?? []
+    messages: payload.messages ?? [],
+    readiness: mapReadiness(payload.readiness)
   };
 }
 
@@ -197,12 +224,14 @@ export async function sendMessage(threadId: string, content: string): Promise<Ch
     state: payload.state,
     assistantMessage: payload.assistant_message,
     dossier: mapDossier(payload.dossier),
+    readiness: mapReadiness(payload.readiness),
     recommendation: payload.recommendation ? mapRecommendation(payload.recommendation) : null,
     modelAction: {
       action: payload.model_action.action,
       nextQuestion: payload.model_action.nextQuestion ?? null,
       reasoningSummary: payload.model_action.reasoningSummary,
-      sourceIds: payload.model_action.sourceIds ?? []
+      sourceIds: payload.model_action.sourceIds ?? [],
+      readiness: payload.model_action.readiness ? mapReadiness(payload.model_action.readiness) : undefined
     }
   };
 }
@@ -219,4 +248,3 @@ export async function comparePrograms(leftProgramId: string, rightProgramId: str
   });
   return mapCompare(payload);
 }
-

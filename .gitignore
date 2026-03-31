@@ -16,5 +16,6 @@ services/api/.coverage
 services/api/gaokao_mvp.db
 services/api/*.db
 packages/knowledge/data/runtime
+logs
 .env
 .DS_Store

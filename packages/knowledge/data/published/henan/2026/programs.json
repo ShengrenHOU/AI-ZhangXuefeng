@@ -2,7 +2,7 @@
   {
     "program_id": "henan-tech-electrical",
     "school_id": "henan-tech",
-    "name": "Electrical Engineering and Automation",
+    "name": "电气工程及其自动化",
     "subject_requirements": ["physics"],
     "historical_rank": 76000,
     "tuition_cny": 5500,
@@ -13,7 +13,7 @@
   {
     "program_id": "zhengzhou-university-computer",
     "school_id": "zhengzhou-university",
-    "name": "Computer Science and Technology",
+    "name": "计算机科学与技术",
     "subject_requirements": ["physics"],
     "historical_rank": 18000,
     "tuition_cny": 6500,
@@ -24,7 +24,7 @@
   {
     "program_id": "xinyang-normal-education",
     "school_id": "xinyang-normal",
-    "name": "Primary Education",
+    "name": "小学教育",
     "subject_requirements": [],
     "historical_rank": 92000,
     "tuition_cny": 4400,
@@ -33,4 +33,3 @@
     "source_ids": ["src-program-xynu-education", "src-charter-xynu-2026"]
   }
 ]
-

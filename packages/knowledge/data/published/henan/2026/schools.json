@@ -1,24 +1,23 @@
 [
   {
     "school_id": "henan-tech",
-    "name": "Henan Institute of Technology",
+    "name": "河南工学院",
     "city": "Xinxiang",
     "tier": "provincial_public",
     "source_ids": ["src-school-henan-tech"]
   },
   {
     "school_id": "zhengzhou-university",
-    "name": "Zhengzhou University",
+    "name": "郑州大学",
     "city": "Zhengzhou",
     "tier": "double_first_class",
     "source_ids": ["src-school-zzu"]
   },
   {
     "school_id": "xinyang-normal",
-    "name": "Xinyang Normal University",
+    "name": "信阳师范大学",
     "city": "Xinyang",
     "tier": "provincial_public",
     "source_ids": ["src-school-xynu"]
   }
 ]
-

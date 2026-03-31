@@ -38,6 +38,10 @@ class RecommendationRequest(BaseModel):
 class RecommendationDecision(BaseModel):
     school_id: str
     program_id: str
+    school_name: str
+    program_name: str
+    city: str
+    tuition_cny: int
     bucket: Bucket
     fit_reasons: list[str]
     risk_warnings: list[str]
@@ -53,4 +57,3 @@ class RecommendationRun(BaseModel):
     knowledge_version: str
     model_version: str
     items: list[RecommendationDecision]
-

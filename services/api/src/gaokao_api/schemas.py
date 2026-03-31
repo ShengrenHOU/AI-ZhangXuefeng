@@ -6,10 +6,24 @@ from pydantic import BaseModel, Field
 from recommendation_core.models import RecommendationRun, StudentDossier
 
 
+class ConflictNoticeResponse(BaseModel):
+    code: str
+    message: str
+
+
+class ReadinessResponse(BaseModel):
+    level: Literal["insufficient_info", "near_ready", "ready_for_recommendation"]
+    can_recommend: bool
+    missing_fields: list[str]
+    missing_labels: list[str]
+    conflicts: list[ConflictNoticeResponse]
+
+
 class SessionStartResponse(BaseModel):
     thread_id: str
     state: str
     dossier: StudentDossier
+    readiness: ReadinessResponse
 
 
 class SessionSnapshotResponse(BaseModel):
@@ -17,6 +31,7 @@ class SessionSnapshotResponse(BaseModel):
     state: str
     dossier: StudentDossier
     messages: list[dict]
+    readiness: ReadinessResponse
 
 
 class ChatMessageRequest(BaseModel):
@@ -29,6 +44,7 @@ class ChatMessageResponse(BaseModel):
     assistant_message: str
     dossier: StudentDossier
     model_action: dict
+    readiness: ReadinessResponse
     recommendation: RecommendationRun | None = None
 
 

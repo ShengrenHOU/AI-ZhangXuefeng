@@ -23,34 +23,35 @@ export default async function ComparePage() {
   return (
     <main className="shell">
       <section className="panel">
-        <div className="eyebrow">Compare surface</div>
+        <div className="section-title">方案对比</div>
         <h1 className="headline" style={{ fontSize: "3rem" }}>
-          Compare two programs without losing source context.
+          不只是看哪个好，还要看哪个更适合你现在的条件。
         </h1>
         <p className="lead">
-          {result ? result.summary : "The compare API is not reachable yet. Once the backend is deployed, this page will fetch a live comparison on each request."}
+          {result ? result.summary : "后端还没有连通时，这里会先展示占位说明；一旦 API 在线，这里会按请求实时生成对比结果。"}
         </p>
         <div className="card">
-          <strong>Current compare contract</strong>
+          <strong>本页会重点比较</strong>
           <div style={{ marginTop: 12 }}>
-            <span className="tag">{result?.leftProgramId ?? "left program"}</span>
-            <span className="tag">{result?.rightProgramId ?? "right program"}</span>
-            <span className="tag">fit reasoning</span>
-            <span className="tag">source overlap</span>
+            <span className="tag">{result?.leftProgramId ?? "候选方案 A"}</span>
+            <span className="tag">{result?.rightProgramId ?? "候选方案 B"}</span>
+            <span className="tag">适配理由</span>
+            <span className="tag">风险差异</span>
+            <span className="tag">依据覆盖</span>
           </div>
         </div>
         {result ? (
           <div className="link-row">
             {result.sourceIds.map((sourceId) => (
               <Link className="button secondary" href={`/sources/${sourceId}`} key={sourceId}>
-                {sourceId}
+                查看依据：{sourceId}
               </Link>
             ))}
           </div>
         ) : null}
         <div className="link-row">
           <Link className="button" href="/">
-            Back to home
+            返回首页
           </Link>
         </div>
       </section>

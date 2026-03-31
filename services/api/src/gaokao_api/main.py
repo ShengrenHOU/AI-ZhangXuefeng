@@ -60,7 +60,12 @@ def healthcheck() -> dict:
 def start_session() -> SessionStartResponse:
     initial = state_machine.initialize()
     session_repo.create(initial["thread_id"], initial["state"], initial["dossier"], initial["messages"])
-    return SessionStartResponse(thread_id=initial["thread_id"], state=initial["state"], dossier=StudentDossier(**initial["dossier"]))
+    return SessionStartResponse(
+        thread_id=initial["thread_id"],
+        state=initial["state"],
+        dossier=StudentDossier(**initial["dossier"]),
+        readiness=initial["readiness"],
+    )
 
 
 @app.post("/api/session/{thread_id}/message", response_model=ChatMessageResponse)
@@ -79,6 +84,7 @@ def send_message(thread_id: str, payload: ChatMessageRequest) -> ChatMessageResp
         assistant_message=result["assistant_message"],
         dossier=StudentDossier(**result["dossier"]),
         model_action=result["model_action"],
+        readiness=result["readiness"],
         recommendation=result["recommendation"],
     )
 
@@ -101,6 +107,7 @@ def get_session(thread_id: str) -> SessionSnapshotResponse:
         state=existing.state,
         dossier=StudentDossier(**existing.dossier),
         messages=existing.messages,
+        readiness=state_machine.evaluate_dossier(StudentDossier(**existing.dossier)),
     )
 
 
@@ -122,7 +129,13 @@ def compare_programs(payload: ComparePayload) -> CompareResponse:
     programs = {program["program_id"]: program for program in knowledge_repo.load_programs(province=settings.province, year=settings.target_year)}
     left = programs[payload.left_program_id]
     right = programs[payload.right_program_id]
-    summary = f"{left['name']} focuses on {', '.join(left['tags'])}, while {right['name']} focuses on {', '.join(right['tags'])}."
+    left_tags = "、".join(left["tags"])
+    right_tags = "、".join(right["tags"])
+    summary = (
+        f"{left['name']}和{right['name']}的侧重点并不一样。"
+        f"前者更偏向 {left_tags}，后者更偏向 {right_tags}。"
+        "如果你现在更看重稳妥和家庭可接受度，就要结合学费、城市、风险提示一起看，而不是只看专业名称。"
+    )
     source_ids = sorted(set(left["source_ids"] + right["source_ids"]))
     return CompareResponse(left_program_id=left["program_id"], right_program_id=right["program_id"], summary=summary, source_ids=source_ids)
 
