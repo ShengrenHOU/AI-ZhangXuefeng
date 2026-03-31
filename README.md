@@ -1,6 +1,6 @@
 # Gaokao Assistant MVP
 
-`gaokao-mvp` is a product-first gaokao planning assistant. The online runtime uses a typed dialogue state machine, a deterministic recommendation core, Xiaomi MiMo API compatibility for model access, and published knowledge data. Offline knowledge operations are separated from the user-facing recommendation path.
+`gaokao-mvp` is a product-first gaokao planning assistant. The online runtime uses a typed dialogue state machine, a deterministic recommendation core, Ark Coding Plan's OpenAI-compatible endpoint for model access, and published knowledge data. Offline knowledge operations are separated from the user-facing recommendation path.
 
 ## Workspace Shape
 
@@ -35,21 +35,21 @@ py -m venv .venv
 
 If `DATABASE_URL` is unset, the API falls back to a local SQLite file for development. The repository still treats PostgreSQL as the target runtime shape.
 
-## Xiaomi MiMo API Configuration
+## Ark Coding Plan Configuration
 
-The API layer is prepared for Xiaomi MiMo's OpenAI-compatible endpoint:
+The API layer is prepared for Ark Coding Plan's OpenAI-compatible coding endpoint:
 
-- base URL: `https://api.xiaomimimo.com/v1`
-- chat endpoint: `https://api.xiaomimimo.com/v1/chat/completions`
-- auth: either `api-key: $MIMO_API_KEY` or `Authorization: Bearer $MIMO_API_KEY`
-- recommended phase-1 model default: `mimo-v2-flash`
+- base URL: `https://ark.cn-beijing.volces.com/api/coding/v3`
+- use the Coding Plan endpoint, not `https://ark.cn-beijing.volces.com/api/v3`
+- auth: Ark API Key from Volcano Engine console
+- current default model: `minimax-m2.5`
 
 Environment variables:
 
 ```powershell
-$env:MIMO_API_KEY="your-key"
-$env:MIMO_MODEL="mimo-v2-flash"
-$env:MIMO_BASE_URL="https://api.xiaomimimo.com/v1"
+$env:ARK_API_KEY="your-key"
+$env:ARK_MODEL="minimax-m2.5"
+$env:ARK_BASE_URL="https://ark.cn-beijing.volces.com/api/coding/v3"
 ```
 
 ## Current Scope
@@ -63,6 +63,6 @@ $env:MIMO_BASE_URL="https://api.xiaomimimo.com/v1"
 ## Not Yet Implemented
 
 - external knowledge operations runtime
-- real Xiaomi MiMo chat-completions execution
+- real Ark Coding Plan live execution
 - human review console
 - multi-province datasets

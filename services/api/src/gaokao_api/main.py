@@ -86,7 +86,7 @@ def run_recommendation(request: RecommendationRequest) -> dict:
         programs=knowledge_repo.load_programs(province=settings.province, year=settings.target_year),
         schools=knowledge_repo.load_schools(province=settings.province, year=settings.target_year),
         knowledge_version=manifest["version"],
-        model_version=settings.mimo_model if settings.mimo_api_key else "mock-structured-output",
+        model_version=settings.ark_model if settings.ark_api_key else "mock-structured-output",
     )
     return run.model_dump()
 

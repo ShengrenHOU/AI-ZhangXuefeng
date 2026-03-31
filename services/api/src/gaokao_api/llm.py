@@ -23,17 +23,17 @@ class StructuredOutputSchemas:
         return json.loads(path.read_text(encoding="utf-8"))
 
 
-class XiaomiMimoChatClient:
+class ArkCodingPlanClient:
     """
     Phase 1 keeps the live call optional.
-    This adapter is the stable seam for Xiaomi MiMo's OpenAI-compatible chat API.
+    This adapter is the stable seam for Ark Coding Plan's OpenAI-compatible coding endpoint.
     """
 
     def __init__(self) -> None:
-        self.model = settings.mimo_model
-        self.base_url = settings.mimo_base_url
+        self.model = settings.ark_model
+        self.base_url = settings.ark_base_url
         self.schemas = StructuredOutputSchemas()
-        self._client = OpenAI(api_key=settings.mimo_api_key, base_url=self.base_url) if settings.mimo_api_key else None
+        self._client = OpenAI(api_key=settings.ark_api_key, base_url=self.base_url) if settings.ark_api_key else None
 
     def is_configured(self) -> bool:
         return self._client is not None
