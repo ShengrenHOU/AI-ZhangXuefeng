@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["traceId", "rulesVersion", "knowledgeVersion", "modelVersion", "items"],
+  "properties": {
+    "traceId": { "type": "string" },
+    "rulesVersion": { "type": "string" },
+    "knowledgeVersion": { "type": "string" },
+    "modelVersion": { "type": "string" },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["schoolId", "programId", "bucket", "fitReasons", "riskWarnings", "parentSummary", "sourceIds"],
+        "properties": {
+          "schoolId": { "type": "string" },
+          "programId": { "type": "string" },
+          "bucket": { "type": "string", "enum": ["reach", "match", "safe"] },
+          "fitReasons": { "type": "array", "items": { "type": "string" } },
+          "riskWarnings": { "type": "array", "items": { "type": "string" } },
+          "parentSummary": { "type": "string" },
+          "sourceIds": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  }
+}
+

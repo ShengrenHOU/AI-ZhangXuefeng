@@ -1,0 +1,13 @@
+{
+  "name": "gaokao-mvp",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.6.1",
+  "scripts": {
+    "install:web": "pnpm install --filter @gaokao-mvp/web...",
+    "dev:web": "pnpm --filter @gaokao-mvp/web dev",
+    "build:web": "pnpm --filter @gaokao-mvp/web build",
+    "check:web": "pnpm --filter @gaokao-mvp/web typecheck && pnpm --filter @gaokao-mvp/web build"
+  }
+}
+

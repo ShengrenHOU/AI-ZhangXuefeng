@@ -1,0 +1,93 @@
+[
+  {
+    "source_id": "src-school-henan-tech",
+    "kind": "official_fact",
+    "title": "Henan Institute of Technology school metadata",
+    "year": 2026,
+    "publication_status": "published",
+    "source_url": "https://example.edu/henan-tech/meta",
+    "fetched_at": "2026-03-31T09:00:00+08:00",
+    "summary": "Official school metadata for Henan Institute of Technology."
+  },
+  {
+    "source_id": "src-school-zzu",
+    "kind": "official_fact",
+    "title": "Zhengzhou University school metadata",
+    "year": 2026,
+    "publication_status": "published",
+    "source_url": "https://example.edu/zzu/meta",
+    "fetched_at": "2026-03-31T09:00:00+08:00",
+    "summary": "Official school metadata for Zhengzhou University."
+  },
+  {
+    "source_id": "src-school-xynu",
+    "kind": "official_fact",
+    "title": "Xinyang Normal University school metadata",
+    "year": 2026,
+    "publication_status": "published",
+    "source_url": "https://example.edu/xynu/meta",
+    "fetched_at": "2026-03-31T09:00:00+08:00",
+    "summary": "Official school metadata for Xinyang Normal University."
+  },
+  {
+    "source_id": "src-program-henan-tech-electrical",
+    "kind": "official_fact",
+    "title": "Henan Institute of Technology electrical admissions",
+    "year": 2026,
+    "publication_status": "published",
+    "source_url": "https://example.edu/henan-tech/electrical",
+    "fetched_at": "2026-03-31T09:10:00+08:00",
+    "summary": "Official program line and requirement data."
+  },
+  {
+    "source_id": "src-program-zzu-computer",
+    "kind": "official_fact",
+    "title": "Zhengzhou University computer admissions",
+    "year": 2026,
+    "publication_status": "published",
+    "source_url": "https://example.edu/zzu/computer",
+    "fetched_at": "2026-03-31T09:10:00+08:00",
+    "summary": "Official program line and requirement data."
+  },
+  {
+    "source_id": "src-program-xynu-education",
+    "kind": "official_fact",
+    "title": "Xinyang Normal University education admissions",
+    "year": 2026,
+    "publication_status": "published",
+    "source_url": "https://example.edu/xynu/education",
+    "fetched_at": "2026-03-31T09:10:00+08:00",
+    "summary": "Official program line and requirement data."
+  },
+  {
+    "source_id": "src-charter-henan-tech-2026",
+    "kind": "governed_explainer",
+    "title": "Henan Institute of Technology 2026 charter summary",
+    "year": 2026,
+    "publication_status": "published",
+    "source_url": "https://example.edu/henan-tech/charter-2026",
+    "fetched_at": "2026-03-31T10:00:00+08:00",
+    "summary": "Reviewed charter summary for family-friendly explanation."
+  },
+  {
+    "source_id": "src-charter-zzu-2026",
+    "kind": "governed_explainer",
+    "title": "Zhengzhou University 2026 charter summary",
+    "year": 2026,
+    "publication_status": "published",
+    "source_url": "https://example.edu/zzu/charter-2026",
+    "fetched_at": "2026-03-31T10:00:00+08:00",
+    "summary": "Reviewed charter summary for family-friendly explanation."
+  },
+  {
+    "source_id": "src-charter-xynu-2026",
+    "kind": "governed_explainer",
+    "title": "Xinyang Normal University 2026 charter summary",
+    "year": 2026,
+    "publication_status": "published",
+    "source_url": "https://example.edu/xynu/charter-2026",
+    "fetched_at": "2026-03-31T10:00:00+08:00",
+    "summary": "Reviewed charter summary for family-friendly explanation."
+  }
+]
+

@@ -1,0 +1,38 @@
+from __future__ import annotations
+
+import os
+
+os.environ["DATABASE_URL"] = "sqlite:///./services/api/test_gaokao_mvp.db"
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+from gaokao_api.main import app  # noqa: E402
+
+
+client = TestClient(app)
+
+
+def test_session_flow_and_dossier_endpoint() -> None:
+    start = client.post("/api/session/start")
+    assert start.status_code == 200
+    thread_id = start.json()["thread_id"]
+
+    message = client.post(
+        f"/api/session/{thread_id}/message",
+        json={"content": "河南，位次: 68000，physics chemistry biology，预算: 6500，想学电气，稳一点。"},
+    )
+    assert message.status_code == 200
+    payload = message.json()
+    assert payload["thread_id"] == thread_id
+    assert payload["recommendation"] is not None
+
+    dossier = client.get(f"/api/session/{thread_id}/dossier")
+    assert dossier.status_code == 200
+    assert dossier.json()["province"] == "henan"
+
+
+def test_source_lookup() -> None:
+    response = client.get("/api/sources/src-program-henan-tech-electrical")
+    assert response.status_code == 200
+    assert response.json()["publication_status"] == "published"
+

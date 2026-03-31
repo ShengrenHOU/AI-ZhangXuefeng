@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gaokao-knowledge"
+version = "0.1.0"
+description = "Knowledge repository helpers for gaokao-mvp"
+requires-python = ">=3.12"
+dependencies = ["pydantic>=2.8"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["action", "dossierPatch", "reasoningSummary", "sourceIds"],
+  "properties": {
+    "action": {
+      "type": "string",
+      "enum": [
+        "ask_followup",
+        "update_dossier",
+        "confirm_constraints",
+        "explain_results",
+        "compare_options",
+        "refuse"
+      ]
+    },
+    "dossierPatch": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "nextQuestion": {
+      "type": ["string", "null"]
+    },
+    "reasoningSummary": {
+      "type": "string"
+    },
+    "sourceIds": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}
+

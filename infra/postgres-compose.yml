@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:16
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: gaokao
+      POSTGRES_PASSWORD: gaokao
+      POSTGRES_DB: gaokao_mvp
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
+
