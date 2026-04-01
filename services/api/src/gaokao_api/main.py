@@ -24,6 +24,7 @@ from .schemas import (
     SourceRecordResponse,
 )
 from .state_machine import SessionStateMachine
+from .web_retrieval import WebRetriever
 
 Base.metadata.create_all(bind=engine)
 ensure_schema_compatibility()
@@ -41,6 +42,10 @@ state_machine = SessionStateMachine(
     repository=knowledge_repo,
     recommendation_core=RecommendationCore(),
     planner_client=ArkCodingPlanClient(),
+    web_retriever=WebRetriever(
+        max_results=settings.web_retrieval_max_results,
+        max_chars=settings.web_context_char_limit,
+    ),
     province=settings.province,
     target_year=settings.target_year,
 )
@@ -209,6 +214,12 @@ def stream_message(thread_id: str, payload: ChatMessageRequest) -> StreamingResp
                     "readiness": result["readiness"],
                 },
             )
+        if result["model_action"]["action"] in {"recommend", "refine_recommendation", "explain_results"} and persisted_recommendation:
+            for chunk in _stream_recommendation_text(result["dossier"], payload.content):
+                yield _sse_event("assistant_delta", {"delta": chunk})
+        elif result["model_action"]["action"] == "compare_options":
+            for chunk in _chunk_text(result["assistant_message"]):
+                yield _sse_event("assistant_delta", {"delta": chunk})
         if persisted_recommendation:
             for item in persisted_recommendation["items"]:
                 yield _sse_event("recommendation_delta", item)
@@ -292,3 +303,25 @@ def create_feedback(payload: FeedbackRequest) -> dict:
 
 def _sse_event(event: str, payload: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+def _stream_recommendation_text(dossier: dict, user_message: str):
+    if state_machine.planner_client is not None and state_machine.planner_client.is_configured():
+        try:
+            context_slice = state_machine._retrieve_knowledge_slice(StudentDossier(**dossier), user_message)
+            for chunk in state_machine.planner_client.stream_recommendation_text(
+                dossier=dossier,
+                retrieved_knowledge=context_slice,
+            ):
+                if chunk:
+                    yield chunk
+            return
+        except Exception:
+            pass
+    for chunk in _chunk_text("正在整理正式建议，请稍等。"):
+        yield chunk
+
+
+def _chunk_text(text: str, chunk_size: int = 18):
+    for index in range(0, len(text), chunk_size):
+        yield text[index : index + chunk_size]

@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     ark_deepthink_model: str | None = None
     ark_base_url: str = "https://ark.cn-beijing.volces.com/api/coding/v3"
     enable_live_llm: bool = False
+    enable_web_retrieval: bool = True
+    web_retrieval_max_results: int = 4
+    web_context_char_limit: int = 1400
     knowledge_root: str = "packages/knowledge/data"
     province: str = "henan"
     target_year: int = 2026

@@ -12,6 +12,7 @@ from recommendation_core import RecommendationCore
 from recommendation_core.models import FamilyConstraintSet, RecommendationDecision, RecommendationRequest, RecommendationRun, StudentDossier
 
 from .llm import ArkCodingPlanClient, PlannerAction, RecommendationSelection
+from .web_retrieval import WebRetriever
 
 
 FOLLOW_UP_ORDER = [
@@ -133,6 +134,7 @@ class SessionStateMachine:
     repository: KnowledgeRepository
     recommendation_core: RecommendationCore
     planner_client: ArkCodingPlanClient | None = None
+    web_retriever: WebRetriever | None = None
     province: str = "henan"
     target_year: int = 2026
 
@@ -226,8 +228,8 @@ class SessionStateMachine:
                     recommendation = cached_recommendation
                     recommendation_summary = "你确认过的条件没有变化，我继续沿用刚才这版正式建议。"
                 else:
-                    task_timeline.append(self._task_step("retrieve", "completed", "正在检索已发布知识与公开信息"))
-                    recommendation, recommendation_summary = self._run_recommendation(state["thread_id"], dossier)
+                    recommendation, recommendation_summary, context_slice = self._run_recommendation(state["thread_id"], dossier, content)
+                    task_timeline.extend(self._context_task_steps(context_slice))
                 action = "explain_results"
                 state_name = "result_explanation"
                 pending_recommendation_confirmation = False
@@ -256,9 +258,9 @@ class SessionStateMachine:
             action = "directional_guidance"
             state_name = "directional_guidance"
             pending_recommendation_confirmation = False
-            assistant_message = self._build_directional_guidance(dossier, readiness)
+            assistant_message, context_slice = self._build_directional_guidance(dossier, readiness, content)
             next_question = self._next_question(dossier, readiness, planner_action)
-            task_timeline.append(self._task_step("retrieve", "completed", "正在检索已发布知识与公开信息"))
+            task_timeline.extend(self._context_task_steps(context_slice))
             task_timeline.append(self._task_step("respond", "completed", "正在整理方向性建议"))
         else:
             action = "ask_followup"
@@ -357,11 +359,12 @@ class SessionStateMachine:
             readiness_level=readiness_level,
         )
 
-    def build_recommendation_run(self, thread_id: str, dossier: StudentDossier) -> tuple[dict[str, Any], str]:
-        return self._run_recommendation(thread_id, dossier)
+    def build_recommendation_run(self, thread_id: str, dossier: StudentDossier, user_message: str = "") -> tuple[dict[str, Any], str]:
+        run, summary, _ = self._run_recommendation(thread_id, dossier, user_message)
+        return run, summary
 
-    def _run_recommendation(self, thread_id: str, dossier: StudentDossier) -> tuple[dict[str, Any], str]:
-        knowledge_slice = self._retrieve_knowledge_slice(dossier)
+    def _run_recommendation(self, thread_id: str, dossier: StudentDossier, user_message: str) -> tuple[dict[str, Any], str, dict[str, Any]]:
+        knowledge_slice = self._retrieve_knowledge_slice(dossier, user_message)
         knowledge_version = knowledge_slice["knowledge_version"]
 
         if self.planner_client is not None and self.planner_client.is_configured():
@@ -377,7 +380,7 @@ class SessionStateMachine:
                     knowledge_version=knowledge_version,
                 )
                 if model_led_run.items:
-                    return model_led_run.model_dump(), recommendation_selection.reasoning_summary
+                    return model_led_run.model_dump(), recommendation_selection.reasoning_summary, knowledge_slice
 
         run = self.recommendation_core.run(
             request=RecommendationRequest(thread_id=thread_id, dossier=dossier),
@@ -386,7 +389,7 @@ class SessionStateMachine:
             knowledge_version=knowledge_version,
             model_version="knowledge-first-fallback",
         )
-        return run.model_dump(), "我先基于当前已发布知识和你确认过的条件，整理出一版更稳妥的建议。后面你继续补条件，我会继续帮你重排。"
+        return run.model_dump(), "我先基于当前已发布知识和你确认过的条件，整理出一版更稳妥的建议。后面你继续补条件，我会继续帮你重排。", knowledge_slice
 
     def _patch_from_action(self, planner_action: PlannerAction | None) -> StudentDossier:
         if planner_action is None:
@@ -423,7 +426,7 @@ class SessionStateMachine:
                 updated[key] = value
         return StudentDossier(**updated)
 
-    def _retrieve_knowledge_slice(self, dossier: StudentDossier) -> dict[str, Any]:
+    def _retrieve_knowledge_slice(self, dossier: StudentDossier, user_message: str = "") -> dict[str, Any]:
         manifest = self.repository.load_manifest(province=self.province, year=self.target_year)
         programs = self.repository.load_programs(province=self.province, year=self.target_year)
         schools = self.repository.load_schools(province=self.province, year=self.target_year)
@@ -477,11 +480,14 @@ class SessionStateMachine:
             candidate["retrieval_rank"] = index
             candidate["city_label"] = DISPLAY_LABELS.get(candidate["city"], candidate["city"])
 
+        web_results = self._retrieve_web_results(dossier, user_message)
+
         return {
             "province": self.province,
             "target_year": self.target_year,
             "knowledge_version": manifest["version"],
             "candidates": top_candidates,
+            "web_results": web_results,
         }
 
     def _candidate_retrieval_score(self, dossier: StudentDossier, program: dict[str, Any]) -> float:
@@ -784,6 +790,21 @@ class SessionStateMachine:
     def _task_step(self, step: str, status: str, label: str) -> dict[str, str]:
         return {"step": step, "status": status, "label": label}
 
+    def _context_task_steps(self, context_slice: dict[str, Any]) -> list[dict[str, str]]:
+        steps = [self._task_step("retrieve", "completed", "正在检索已发布知识")]
+        if context_slice.get("web_results"):
+            steps.append(self._task_step("web_search", "completed", "正在搜索最新公开信息"))
+        return steps
+
+    def _retrieve_web_results(self, dossier: StudentDossier, user_message: str) -> list[dict[str, Any]]:
+        if self.web_retriever is None or self.planner_client is None or not self.planner_client.is_configured():
+            return []
+        retrieval_plan = self.planner_client.retrieve_queries(
+            dossier=dossier.model_dump(),
+            user_message=user_message,
+        )
+        return self.web_retriever.retrieve(retrieval_plan.queries)
+
     def _looks_like_recommendation_request(self, content: str) -> bool:
         triggers = ["推荐", "怎么报", "选什么专业", "选什么学校", "怎么选", "给我建议", "shortlist"]
         return any(trigger in content.lower() or trigger in content for trigger in triggers)
@@ -823,8 +844,8 @@ class SessionStateMachine:
             f"如果你更看重专业匹配或学校层次，再结合 {left['school_name']} 这类候选做取舍。"
         )
 
-    def _build_directional_guidance(self, dossier: StudentDossier, readiness: dict[str, Any]) -> str:
-        knowledge_slice = self._retrieve_knowledge_slice(dossier)
+    def _build_directional_guidance(self, dossier: StudentDossier, readiness: dict[str, Any], user_message: str) -> tuple[str, dict[str, Any]]:
+        knowledge_slice = self._retrieve_knowledge_slice(dossier, user_message)
         candidate_names = [
             f"{candidate['school_name']} / {candidate['program_name']}"
             for candidate in knowledge_slice.get("candidates", [])[:2]
@@ -834,10 +855,13 @@ class SessionStateMachine:
         else:
             candidate_text = "当前知识库里更匹配的候选"
         missing = "、".join(readiness["missing_labels"][:2]) if readiness["missing_labels"] else "少量关键条件"
-        return (
+        guidance = (
             f"我先给你一个方向判断：按你现在已经给出的条件，我会优先从 {candidate_text} 这一类方向里继续收敛。"
             f"不过 {missing} 还会明显影响最终推荐顺序，所以我会一边给方向，一边继续把条件补全。"
         )
+        if knowledge_slice.get("web_results"):
+            guidance += " 我还会顺手参考一部分最新公开信息，避免只盯着本地已发布知识。"
+        return guidance, knowledge_slice
 
     def _append_recommendation_version(self, versions: list[dict[str, Any]], recommendation: dict[str, Any], label: str) -> list[dict[str, Any]]:
         new_version = {

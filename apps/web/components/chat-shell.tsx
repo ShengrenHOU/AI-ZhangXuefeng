@@ -300,6 +300,7 @@ export function ChatShell() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [loadingInput, setLoadingInput] = useState<string>("");
+  const [streamingAssistantText, setStreamingAssistantText] = useState<string>("");
 
   useEffect(() => {
     let disposed = false;
@@ -351,6 +352,7 @@ export function ChatShell() {
     setLoadingInput(outgoing);
     setError(null);
     setStreamedItems([]);
+    setStreamingAssistantText("");
     setMessages((current) => [...current, { role: "user", content: outgoing }]);
     setDraft("");
 
@@ -365,6 +367,10 @@ export function ChatShell() {
           setStreamedItems((current) => [...current, item]);
           return;
         }
+        if (event.event === "assistant_delta") {
+          setStreamingAssistantText((current) => current + event.data.delta);
+          return;
+        }
         if (event.event === "final_message") {
           const payload = event.data;
           setDossier(payload.dossier);
@@ -377,6 +383,7 @@ export function ChatShell() {
           setRecommendation(payload.recommendation);
           setRecommendationVersions(payload.recommendationVersions ?? []);
           setTaskTimeline(payload.taskTimeline ?? []);
+          setStreamingAssistantText("");
         }
       });
     } catch {
@@ -506,8 +513,8 @@ export function ChatShell() {
             <div className="message assistant">
               <div className="message-role">{THREAD_LABELS.assistant}</div>
               <div className="assistant-card loading-card">
-                <div className="assistant-card-title">{loadingStatus.title}</div>
-                <p>{loadingStatus.body}</p>
+                <div className="assistant-card-title">{streamingAssistantText ? "正在逐步生成建议" : loadingStatus.title}</div>
+                <p>{streamingAssistantText || loadingStatus.body}</p>
               </div>
             </div>
           ) : null}

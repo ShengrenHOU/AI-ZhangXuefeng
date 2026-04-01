@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from typing import Any, Literal
 
 from openai import OpenAI
@@ -222,6 +223,46 @@ class ArkCodingPlanClient:
     ) -> RecommendationSelection | None:
         return self.recommend_from_knowledge(dossier=dossier, retrieved_knowledge=retrieved_knowledge)
 
+    def stream_recommendation_text(
+        self,
+        *,
+        dossier: dict[str, Any],
+        retrieved_knowledge: dict[str, Any],
+    ) -> Iterator[str]:
+        if self._client is None:
+            return iter(())
+
+        messages = [
+            {"role": "system", "content": self._recommendation_stream_prompt()},
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "dossier": dossier,
+                        "retrieved_knowledge": retrieved_knowledge,
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        ]
+
+        stream = self._client.chat.completions.create(
+            model=self.deepthink_model,
+            messages=messages,
+            max_completion_tokens=900,
+            temperature=0.2,
+            top_p=0.9,
+            stream=True,
+        )
+
+        def iterator() -> Iterator[str]:
+            for chunk in stream:
+                delta = chunk.choices[0].delta.content or ""
+                if delta:
+                    yield delta
+
+        return iterator()
+
     def compare_options(
         self,
         *,
@@ -310,6 +351,7 @@ class ArkCodingPlanClient:
         return (
             "你是高考志愿助手的推荐层。"
             "你必须优先吸收 retrieved_knowledge 中的已发布知识，再结合你已有的专业判断做推荐。"
+            "retrieved_knowledge.web_results 中如果有内容，也允许你参考，但要优先相信官方或高校来源。"
             "你不能承诺录取，不能使用“稳上”“包录取”这类表达。"
             "你只能从 retrieved_knowledge.candidates 中选择推荐项，不能发明新的学校或专业。"
             "你不能凭空推断考生的家庭所在地、通勤距离或未明确说出的隐含条件。"
@@ -321,6 +363,15 @@ class ArkCodingPlanClient:
             "parent_summary 要写成家长能直接理解的自然语言。"
             "默认给出 2 到 3 条推荐；如果候选明显不足，可以少于 2 条。"
             "不要在输出文本中暴露 source_id、链接或底层工程字段。"
+        )
+
+    def _recommendation_stream_prompt(self) -> str:
+        return (
+            "你是高考志愿助手，正在给用户流式生成正式建议。"
+            "你必须基于 retrieved_knowledge 中的已发布知识与公开网页检索结果，逐步生成一段中文建议。"
+            "输出必须自然、像顾问说话，不要输出 JSON，不要暴露 source_id 或底层技术字段。"
+            "必须先给结论方向，再讲原因，再点风险。"
+            "不允许保证录取。"
         )
 
     def _compare_prompt(self) -> str:
