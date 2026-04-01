@@ -803,7 +803,10 @@ class SessionStateMachine:
             dossier=dossier.model_dump(),
             user_message=user_message,
         )
-        return self.web_retriever.retrieve(retrieval_plan.queries)
+        try:
+            return self.web_retriever.retrieve(retrieval_plan.queries)
+        except Exception:
+            return []
 
     def _looks_like_recommendation_request(self, content: str) -> bool:
         triggers = ["推荐", "怎么报", "选什么专业", "选什么学校", "怎么选", "给我建议", "shortlist"]

@@ -45,7 +45,9 @@ state_machine = SessionStateMachine(
     web_retriever=WebRetriever(
         max_results=settings.web_retrieval_max_results,
         max_chars=settings.web_context_char_limit,
-    ),
+    )
+    if settings.enable_web_retrieval
+    else None,
     province=settings.province,
     target_year=settings.target_year,
 )
@@ -61,6 +63,7 @@ def healthcheck() -> dict:
         "instant_model": settings.ark_instant_model or settings.ark_model,
         "deepthink_model": settings.ark_deepthink_model or settings.ark_model,
         "live_llm_enabled": settings.enable_live_llm,
+        "web_retrieval_enabled": settings.enable_web_retrieval,
         "knowledge_root": str(settings.knowledge_path),
     }
 
