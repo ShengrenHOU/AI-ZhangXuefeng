@@ -8,6 +8,7 @@ These skills are not generic prompt snippets. They are durable operating rules f
 - product behavior boundaries
 - knowledge governance
 - model assistance constraints
+- runtime promptpack design boundaries
 
 ## Development Skills
 
@@ -48,7 +49,7 @@ These skills are not generic prompt snippets. They are durable operating rules f
 ## How To Use
 
 - During development: read the relevant skill before changing that area
-- During runtime design: encode the skill constraints into workflow, schemas, and prompts
+- During runtime design: encode the skill constraints into workflow, schemas, and `services/api/.../promptpacks`
 - During review: treat any violation of a hard constraint as a design bug, not a stylistic preference
 
 ## Constitutional vs Auxiliary
@@ -64,4 +65,3 @@ Execution-support skills:
 - `workflow-orchestration`
 - `frontend-assistant-ux`
 - `recommendation-explainer`
-

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Control when the system may continue asking questions, when it must clarify conflicts, and when it may produce recommendations.
+Provide minimum safety and maturity guardrails without reducing the model to a mechanical field collector.
 
 ## When To Use
 
@@ -24,16 +24,16 @@ Control when the system may continue asking questions, when it must clarify conf
 
 ## Output Expectations
 
-- one of: ask, clarify, or recommend
-- explicit missing field list
-- explicit conflict list
-- deterministic recommendation eligibility
+- one of: ask, clarify, guide, or recommend
+- explicit missing field hints when useful
+- explicit conflict list when real conflicts exist
+- minimum recommendation eligibility, not a full replacement for model judgment
 
 ## Gate Rules
 
-- if key fields are missing, the system must ask follow-up questions
-- if constraints conflict, the system must clarify before recommending
-- only when the dossier is mature and conflict-free may the system recommend
+- if key fields are missing, the system may still give directional guidance before asking one high-value follow-up
+- if constraints conflict, the system should clarify before presenting a strong recommendation
+- recommendation should stay reversible when new information arrives
 
 ## Minimum Recommendation Gate
 
@@ -53,8 +53,7 @@ Preference or constraint includes:
 
 ## Hard Constraints
 
-- the model may not bypass the gate
-- recommendation is never the default action
-- clarification takes precedence over recommendation
-- recommendation must remain reversible when new information arrives
-
+- do not guarantee admission
+- do not let obvious hard conflicts pass silently
+- do not present a fully precise recommendation when core information is almost empty
+- keep recommendation reversible when new information arrives

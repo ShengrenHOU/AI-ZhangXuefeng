@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from typing import Any, Literal
 
 from openai import OpenAI
 from pydantic import BaseModel, Field, ValidationError
 
 from .config import settings
+from .promptpacks import RuntimePromptRegistry
 
 
 class StructuredOutputSchemas:
@@ -49,6 +51,11 @@ class RetrievalPlan(BaseModel):
     queries: list[str] = Field(default_factory=list)
 
 
+class SafetyStyleGuardResult(BaseModel):
+    approved: bool = True
+    revision_notes: list[str] = Field(default_factory=list)
+
+
 class CompareResultPayload(BaseModel):
     reasoning_summary: str
     summary: str
@@ -56,10 +63,8 @@ class CompareResultPayload(BaseModel):
 
 class ArkCodingPlanClient:
     """
-    Live planner and recommendation adapter for Ark Coding Plan's OpenAI-compatible
-    endpoint. The model may extract dossier updates, ask follow-up questions, and
-    synthesize recommendations from published knowledge. It must not promise
-    admission and should treat retrieved knowledge as the primary context.
+    Live planner and recommendation adapter for Ark's OpenAI-compatible endpoint.
+    Runtime behavior is defined by promptpacks rather than hard-coded prompt strings.
     """
 
     def __init__(self) -> None:
@@ -68,7 +73,14 @@ class ArkCodingPlanClient:
         self.model = self.instant_model
         self.base_url = settings.ark_base_url
         self.schemas = StructuredOutputSchemas()
-        self._client = OpenAI(api_key=settings.ark_api_key, base_url=self.base_url) if settings.ark_api_key and settings.enable_live_llm else None
+        self.promptpacks = RuntimePromptRegistry(
+            settings.repo_root / "services" / "api" / "src" / "gaokao_api" / "promptpacks"
+        )
+        self._client = (
+            OpenAI(api_key=settings.ark_api_key, base_url=self.base_url)
+            if settings.ark_api_key and settings.enable_live_llm
+            else None
+        )
 
     def is_configured(self) -> bool:
         return self._client is not None
@@ -88,7 +100,13 @@ class ArkCodingPlanClient:
         messages = [
             {
                 "role": "system",
-                "content": self._system_prompt(missing_fields),
+                "content": self._intent_router_prompt(
+                    dossier=dossier,
+                    missing_fields=missing_fields,
+                    conflicts=conflicts,
+                    readiness_level=readiness_level,
+                    user_message=user_message,
+                ),
             },
             {
                 "role": "user",
@@ -138,6 +156,58 @@ class ArkCodingPlanClient:
             readiness_level=readiness_level,
         )
 
+    def update_dossier_patch(
+        self,
+        *,
+        dossier: dict[str, Any],
+        user_message: str,
+        task_timeline: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        if self._client is None:
+            return {}
+
+        messages = [
+            {
+                "role": "system",
+                "content": self.promptpacks.render(
+                    "dossier_updater",
+                    dossier=dossier,
+                    user_message=user_message,
+                    task_timeline=task_timeline,
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "current_dossier": dossier,
+                        "latest_user_message": user_message,
+                        "task_timeline": task_timeline,
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        ]
+
+        completion = self._client.chat.completions.create(
+            model=self.instant_model,
+            messages=messages,
+            max_completion_tokens=320,
+            temperature=0.1,
+            top_p=0.9,
+            stream=False,
+            response_format={"type": "json_object"},
+        )
+        raw_content = completion.choices[0].message.content or "{}"
+        try:
+            parsed = self._parse_json_payload(raw_content)
+        except json.JSONDecodeError:
+            return {}
+
+        if isinstance(parsed.get("dossier_patch"), dict):
+            return parsed["dossier_patch"]
+        return parsed if isinstance(parsed, dict) else {}
+
     def retrieve_queries(
         self,
         *,
@@ -145,19 +215,102 @@ class ArkCodingPlanClient:
         user_message: str,
     ) -> RetrievalPlan:
         if self._client is None:
-            return RetrievalPlan()
-        # Keep the first cut conservative: derive a small query set for future web retrieval.
-        fragments = []
-        if dossier.get("province"):
-            fragments.append(str(dossier["province"]))
-        if dossier.get("target_year"):
-            fragments.append(str(dossier["target_year"]))
-        if dossier.get("major_interests"):
-            fragments.extend(dossier["major_interests"][:2])
-        if not fragments:
-            return RetrievalPlan()
-        query = " ".join(fragments + [user_message[:24]])
-        return RetrievalPlan(queries=[query.strip()])
+            return self._fallback_retrieval_plan(dossier=dossier, user_message=user_message)
+
+        task_plan = {"goal": "retrieve_relevant_context", "priority": "published_knowledge_then_open_web"}
+        messages = [
+            {
+                "role": "system",
+                "content": self.promptpacks.render(
+                    "retrieval_planner",
+                    dossier=dossier,
+                    user_message=user_message,
+                    task_plan=task_plan,
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "dossier": dossier,
+                        "user_message": user_message,
+                        "task_plan": task_plan,
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        ]
+
+        completion = self._client.chat.completions.create(
+            model=self.instant_model,
+            messages=messages,
+            max_completion_tokens=260,
+            temperature=0.1,
+            top_p=0.9,
+            stream=False,
+            response_format={"type": "json_object"},
+        )
+        raw_content = completion.choices[0].message.content or "{}"
+        try:
+            parsed = self._parse_json_payload(raw_content)
+            plan = RetrievalPlan.model_validate(parsed)
+            sanitized_queries = self._sanitize_external_queries(plan.queries, dossier=dossier)
+            if sanitized_queries:
+                return RetrievalPlan(queries=sanitized_queries)
+        except (json.JSONDecodeError, ValidationError):
+            pass
+
+        return self._fallback_retrieval_plan(dossier=dossier, user_message=user_message)
+
+    def generate_directional_guidance(
+        self,
+        *,
+        dossier: dict[str, Any],
+        missing_fields: list[str],
+        conflicts: list[dict[str, Any]],
+        user_message: str,
+        retrieved_context: dict[str, Any],
+    ) -> str | None:
+        if self._client is None:
+            return None
+
+        messages = [
+            {
+                "role": "system",
+                "content": self.promptpacks.render(
+                    "directional_guidance",
+                    dossier=dossier,
+                    missing_fields=missing_fields,
+                    conflicts=conflicts,
+                    user_message=user_message,
+                    retrieved_context=retrieved_context,
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "dossier": dossier,
+                        "missing_fields": missing_fields,
+                        "conflicts": conflicts,
+                        "user_message": user_message,
+                        "retrieved_context": retrieved_context,
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        ]
+
+        completion = self._client.chat.completions.create(
+            model=self.instant_model,
+            messages=messages,
+            max_completion_tokens=520,
+            temperature=0.2,
+            top_p=0.9,
+            stream=False,
+        )
+        content = completion.choices[0].message.content
+        return content.strip() if content else None
 
     def recommend_from_knowledge(
         self,
@@ -171,7 +324,10 @@ class ArkCodingPlanClient:
         base_messages = [
             {
                 "role": "system",
-                "content": self._recommendation_prompt(),
+                "content": self._recommendation_prompt(
+                    dossier=dossier,
+                    retrieved_knowledge=retrieved_knowledge,
+                ),
             },
             {
                 "role": "user",
@@ -222,6 +378,52 @@ class ArkCodingPlanClient:
     ) -> RecommendationSelection | None:
         return self.recommend_from_knowledge(dossier=dossier, retrieved_knowledge=retrieved_knowledge)
 
+    def stream_recommendation_text(
+        self,
+        *,
+        dossier: dict[str, Any],
+        retrieved_knowledge: dict[str, Any],
+    ) -> Iterator[str]:
+        if self._client is None:
+            return iter(())
+
+        messages = [
+            {
+                "role": "system",
+                "content": self._recommendation_stream_prompt(
+                    dossier=dossier,
+                    retrieved_knowledge=retrieved_knowledge,
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "dossier": dossier,
+                        "retrieved_knowledge": retrieved_knowledge,
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        ]
+
+        stream = self._client.chat.completions.create(
+            model=self.deepthink_model,
+            messages=messages,
+            max_completion_tokens=900,
+            temperature=0.2,
+            top_p=0.9,
+            stream=True,
+        )
+
+        def iterator() -> Iterator[str]:
+            for chunk in stream:
+                delta = chunk.choices[0].delta.content or ""
+                if delta:
+                    yield delta
+
+        return iterator()
+
     def compare_options(
         self,
         *,
@@ -233,7 +435,14 @@ class ArkCodingPlanClient:
             return None
 
         messages = [
-            {"role": "system", "content": self._compare_prompt()},
+            {
+                "role": "system",
+                "content": self._compare_prompt(
+                    dossier=dossier,
+                    left_option=left_option,
+                    right_option=right_option,
+                ),
+            },
             {
                 "role": "user",
                 "content": json.dumps(
@@ -271,11 +480,21 @@ class ArkCodingPlanClient:
     ) -> str | None:
         if self._client is None:
             return None
+
         messages = [
-            {"role": "system", "content": self._family_summary_prompt()},
+            {
+                "role": "system",
+                "content": self._family_summary_prompt(
+                    dossier=dossier,
+                    recommendation=recommendation,
+                ),
+            },
             {
                 "role": "user",
-                "content": json.dumps({"dossier": dossier, "recommendation": recommendation}, ensure_ascii=False),
+                "content": json.dumps(
+                    {"dossier": dossier, "recommendation": recommendation},
+                    ensure_ascii=False,
+                ),
             },
         ]
         completion = self._client.chat.completions.create(
@@ -288,54 +507,253 @@ class ArkCodingPlanClient:
         )
         return completion.choices[0].message.content
 
-    def _system_prompt(self, missing_fields: list[str]) -> str:
-        return (
-            "你是高考志愿助手的规划层。"
-            "你必须只返回一个 JSON 对象。"
-            "键名必须严格使用 snake_case：action, dossier_patch, next_question, reasoning_summary, source_ids。"
-            "你不能承诺录取，也不能制造确定性结论。"
-            "你只能从用户最新一句话中抽取明确支持的 dossier 字段，不要猜。"
-            "如果用户信息不完整，也允许先给方向性建议，再继续补关键条件。"
-            "如果存在冲突约束，优先使用 action=confirm_constraints。"
-            "action 可以使用 ask_followup、directional_guidance、confirm_constraints、recommend、compare_options、refine_recommendation、explain_reasoning、refuse。"
-            "next_question 必须是中文、简短、像成熟 AI 助手的追问，不要工程味。"
-            "reasoning_summary 必须是中文，面向家长可读。"
-            "合法 dossier_patch 字段包括 province, target_year, rank, score, subject_combination, major_interests, risk_appetite, family_constraints, summary_notes。"
-            "family_constraints 可以包含 annual_budget_cny, city_preference, distance_preference, adjustment_accepted, notes。"
-            f"当前缺失字段：{missing_fields}。"
-            "source_ids 在规划阶段保持空数组。"
+    def guard_user_facing_text(
+        self,
+        *,
+        draft_output: str,
+        model_action: str,
+        user_context: dict[str, Any],
+    ) -> str:
+        if self._client is None or not draft_output.strip():
+            return draft_output
+
+        messages = [
+            {
+                "role": "system",
+                "content": self.promptpacks.render(
+                    "safety_style_guard",
+                    draft_output=draft_output,
+                    model_action=model_action,
+                    user_context=user_context,
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "draft_output": draft_output,
+                        "model_action": model_action,
+                        "user_context": user_context,
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        ]
+        completion = self._client.chat.completions.create(
+            model=self.instant_model,
+            messages=messages,
+            max_completion_tokens=220,
+            temperature=0.1,
+            top_p=0.9,
+            stream=False,
+            response_format={"type": "json_object"},
+        )
+        raw_content = completion.choices[0].message.content or "{}"
+        try:
+            parsed = SafetyStyleGuardResult.model_validate(self._parse_json_payload(raw_content))
+        except (json.JSONDecodeError, ValidationError):
+            return draft_output
+
+        if parsed.approved or not parsed.revision_notes:
+            return draft_output
+
+        rewrite = self._client.chat.completions.create(
+            model=self.instant_model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "你是高考志愿助手的语言润色层。请只改写语言风格，不改变事实、结论和条件，"
+                        "不要保证录取，不要暴露工程字段，要用平等、克制、面向中国家庭的表达。"
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "draft_output": draft_output,
+                            "revision_notes": parsed.revision_notes,
+                            "model_action": model_action,
+                            "user_context": user_context,
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            ],
+            max_completion_tokens=420,
+            temperature=0.15,
+            top_p=0.9,
+            stream=False,
+        )
+        revised = rewrite.choices[0].message.content
+        return revised.strip() if revised else draft_output
+
+    def _intent_router_prompt(
+        self,
+        *,
+        dossier: dict[str, Any],
+        missing_fields: list[str],
+        conflicts: list[dict[str, Any]],
+        readiness_level: str,
+        user_message: str,
+    ) -> str:
+        return self.promptpacks.render(
+            "intent_router",
+            dossier=dossier,
+            missing_fields=missing_fields,
+            conflicts=conflicts,
+            readiness_level=readiness_level,
+            user_message=user_message,
         )
 
-    def _recommendation_prompt(self) -> str:
-        return (
-            "你是高考志愿助手的推荐层。"
-            "你必须优先吸收 retrieved_knowledge 中的已发布知识，再结合你已有的专业判断做推荐。"
-            "你不能承诺录取，不能使用“稳上”“包录取”这类表达。"
-            "你只能从 retrieved_knowledge.candidates 中选择推荐项，不能发明新的学校或专业。"
-            "你不能凭空推断考生的家庭所在地、通勤距离或未明确说出的隐含条件。"
-            "如果候选中存在预算较高、位次压力大、城市冲突等问题，你应该把它们写进 risk_warnings，而不是直接忽略。"
-            "你必须输出 JSON 对象，键名严格使用 snake_case：reasoning_summary, items。"
-            "items 中每一项只允许包含 program_id, bucket, fit_reasons, risk_warnings, parent_summary。"
-            "bucket 只能是 reach, match, safe。"
-            "fit_reasons 和 risk_warnings 都要用中文短句。"
-            "parent_summary 要写成家长能直接理解的自然语言。"
-            "默认给出 2 到 3 条推荐；如果候选明显不足，可以少于 2 条。"
-            "不要在输出文本中暴露 source_id、链接或底层工程字段。"
+    def _recommendation_prompt(
+        self,
+        *,
+        dossier: dict[str, Any],
+        retrieved_knowledge: dict[str, Any],
+    ) -> str:
+        return self.promptpacks.render(
+            "recommendation_generator",
+            dossier=dossier,
+            retrieved_knowledge=retrieved_knowledge,
         )
 
-    def _compare_prompt(self) -> str:
+    def _recommendation_stream_prompt(
+        self,
+        *,
+        dossier: dict[str, Any],
+        retrieved_knowledge: dict[str, Any],
+    ) -> str:
         return (
-            "你是高考志愿助手的对比层。"
-            "你必须只返回 JSON，对象键名是 reasoning_summary 和 summary。"
-            "summary 用中文说明两项方案的关键差异、取舍和更适合什么样的家庭偏好。"
-            "不要输出技术字段，不要承诺录取。"
+            self.promptpacks.render(
+                "recommendation_generator",
+                dossier=dossier,
+                retrieved_knowledge=retrieved_knowledge,
+            )
+            + "\n\n请把建议写成面向家长和学生的自然语言说明，逐步展开，不要输出 JSON，也不要暴露工程字段。"
         )
 
-    def _family_summary_prompt(self) -> str:
-        return (
-            "你是高考志愿助手的家庭沟通摘要层。"
-            "请把 recommendation 整理成家长能直接拿去讨论的中文摘要，不要承诺录取，不要暴露底层技术字段。"
+    def _compare_prompt(
+        self,
+        *,
+        dossier: dict[str, Any],
+        left_option: dict[str, Any],
+        right_option: dict[str, Any],
+    ) -> str:
+        return self.promptpacks.render(
+            "compare_generator",
+            dossier=dossier,
+            left_option=left_option,
+            right_option=right_option,
         )
+
+    def _family_summary_prompt(
+        self,
+        *,
+        dossier: dict[str, Any],
+        recommendation: dict[str, Any],
+    ) -> str:
+        return self.promptpacks.render(
+            "family_summary_writer",
+            dossier=dossier,
+            recommendation=recommendation,
+        )
+
+    def _fallback_retrieval_plan(self, *, dossier: dict[str, Any], user_message: str) -> RetrievalPlan:
+        queries = self._build_safe_external_queries(dossier)
+        return RetrievalPlan(queries=queries)
+
+    def _sanitize_external_queries(self, queries: list[str], *, dossier: dict[str, Any]) -> list[str]:
+        safe_queries = self._build_safe_external_queries(dossier)
+        if not safe_queries:
+            return []
+
+        allowed_tokens = {token.lower() for token in self._allowed_external_tokens(dossier)}
+        sanitized: list[str] = []
+        for query in queries:
+            normalized = " ".join(
+                token
+                for token in query.split()
+                if token.lower() in allowed_tokens
+            ).strip()
+            if normalized and normalized not in sanitized:
+                sanitized.append(normalized)
+
+        merged: list[str] = []
+        for query in [*sanitized, *safe_queries]:
+            if query and query not in merged:
+                merged.append(query)
+        return merged[:3]
+
+    def _build_safe_external_queries(self, dossier: dict[str, Any]) -> list[str]:
+        province = self._display_label(str(dossier.get("province", "")))
+        year = str(dossier.get("target_year") or "").strip()
+        interests = [self._major_interest_label(value) for value in dossier.get("major_interests") or []]
+        subjects = [self._subject_label(value) for value in dossier.get("subject_combination") or []]
+        queries: list[str] = []
+
+        base_parts = [part for part in [province, year, "高考", "志愿", "招生"] if part]
+        if base_parts:
+            queries.append(" ".join(base_parts))
+
+        if interests:
+            queries.append(" ".join([part for part in [province, year, interests[0], "专业", "选科要求"] if part]))
+
+        if subjects:
+            queries.append(" ".join([part for part in [province, year, " ".join(subjects[:2]), "招生", "专业"] if part]))
+
+        return [query for query in queries if query]
+
+    def _allowed_external_tokens(self, dossier: dict[str, Any]) -> list[str]:
+        tokens = [
+            "高考",
+            "志愿",
+            "招生",
+            "专业",
+            "选科要求",
+        ]
+        if dossier.get("province"):
+            tokens.extend([str(dossier["province"]), self._display_label(str(dossier["province"]))])
+        if dossier.get("target_year"):
+            tokens.append(str(dossier["target_year"]))
+        tokens.extend(self._major_interest_label(value) for value in dossier.get("major_interests") or [])
+        tokens.extend(self._subject_label(value) for value in dossier.get("subject_combination") or [])
+        return [token for token in tokens if token]
+
+    def _display_label(self, value: str) -> str:
+        mapping = {
+            "henan": "河南",
+            "beijing": "北京",
+            "shanghai": "上海",
+            "guangzhou": "广州",
+            "shenzhen": "深圳",
+            "hangzhou": "杭州",
+            "nanjing": "南京",
+            "wuhan": "武汉",
+            "chengdu": "成都",
+        }
+        return mapping.get(value.lower(), value)
+
+    def _major_interest_label(self, value: str) -> str:
+        mapping = {
+            "computer_science": "计算机",
+            "engineering": "工科",
+            "education": "教育",
+            "finance": "金融",
+            "medicine": "医学",
+        }
+        return mapping.get(value, value)
+
+    def _subject_label(self, value: str) -> str:
+        mapping = {
+            "physics": "物理",
+            "chemistry": "化学",
+            "biology": "生物",
+            "history": "历史",
+            "politics": "政治",
+            "geography": "地理",
+        }
+        return mapping.get(value, value)
 
     def _parse_json_payload(self, raw_content: str) -> dict[str, Any]:
         normalized = raw_content.strip()

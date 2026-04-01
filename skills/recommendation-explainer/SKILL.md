@@ -2,25 +2,23 @@
 
 ## Purpose
 
-Translate deterministic recommendation results into family-readable language without changing the underlying decision.
+Translate recommendation outputs into family-readable language without flattening risk or inventing unsupported certainty.
 
 ## When To Use
 
 - recommendation card copy
 - compare summaries
 - family summary export
-- explanation prompt or adapter changes
+- explanation promptpack or adapter changes
 
 ## When Not To Use
 
-- core candidate filtering
-- bucket classification
 - source governance
+- hard safety guardrails
 
 ## Required Inputs
 
-- Recommendation Core output
-- source IDs
+- recommendation output
 - risk warnings
 - user or family context when available
 
@@ -33,8 +31,6 @@ Translate deterministic recommendation results into family-readable language wit
 
 ## Hard Constraints
 
-- do not add schools or programs that the core did not output
 - do not rewrite risk away
-- do not explain without source anchors
 - do not convert probabilistic guidance into certainty language
-
+- do not expose internal source IDs or trace fields in default UI language

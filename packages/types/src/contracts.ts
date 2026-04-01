@@ -138,3 +138,40 @@ export interface TaskStep {
   detail: string;
   state: "running" | "completed";
 }
+
+export type ModelRoute = "instant" | "deepthink";
+
+export interface RuntimeSkill {
+  skillId: string;
+  purpose: string;
+  modelRoute: ModelRoute;
+  expectedInputs: string[];
+  expectedOutputs: string[];
+}
+
+export interface TaskPlanStep {
+  step: string;
+  goal: string;
+  reason?: string;
+}
+
+export interface TaskPlan {
+  goal: string;
+  steps: TaskPlanStep[];
+}
+
+export interface RetrievedContextSlice {
+  kind: "published_knowledge" | "web_evidence" | "model_prior_hint";
+  title: string;
+  summary: string;
+  sourceIds?: string[];
+  confidence?: number;
+}
+
+export interface WebEvidenceSlice extends RetrievedContextSlice {
+  kind: "web_evidence";
+  url: string;
+  domain: string;
+}
+
+export type TaskTimeline = TaskStep[];

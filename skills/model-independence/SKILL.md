@@ -32,10 +32,9 @@ Ensure the system can swap foundation models without rewriting its core product 
 
 These should survive a base-model change:
 - workflow
-- readiness gate
 - schemas
 - source governance
-- recommendation core
+- runtime promptpacks
 - dossier structure
 
 ## Adapter Responsibilities
@@ -43,11 +42,11 @@ These should survive a base-model change:
 - transport and API compatibility
 - response parsing
 - structured output extraction
-- reasoning or follow-up drafting
+- model-route selection
+- runtime promptpack loading
 
 ## Hard Constraints
 
 - do not bind the product constitution to a single model vendor
 - do not embed business rules into provider-specific prompts
 - do not make recommendation eligibility depend on model temperament
-
