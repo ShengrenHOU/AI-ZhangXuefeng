@@ -64,6 +64,7 @@ def healthcheck() -> dict:
         "deepthink_model": settings.ark_deepthink_model or settings.ark_model,
         "live_llm_enabled": settings.enable_live_llm,
         "web_retrieval_enabled": settings.enable_web_retrieval,
+        "web_retrieval_strategy": "bing_rss_primary_duckduckgo_fallback",
         "knowledge_root": str(settings.knowledge_path),
     }
 

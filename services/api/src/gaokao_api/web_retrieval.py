@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import re
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import parse_qs, quote_plus, unquote, urlparse
@@ -10,6 +11,7 @@ import httpx
 
 
 SEARCH_ENDPOINT = "https://html.duckduckgo.com/html/"
+BING_RSS_ENDPOINT = "https://www.bing.com/search?format=rss&cc=cn&setlang=zh-Hans&q="
 DEFAULT_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0 Safari/537.36",
 }
@@ -44,6 +46,45 @@ class WebRetriever:
         return results
 
     def _search(self, query: str) -> list[dict[str, Any]]:
+        for search_fn in (self._search_bing_rss, self._search_duckduckgo):
+            try:
+                candidates = search_fn(query)
+                if candidates:
+                    return candidates
+            except Exception:
+                continue
+        return []
+
+    def _search_bing_rss(self, query: str) -> list[dict[str, Any]]:
+        response = httpx.get(
+            f"{BING_RSS_ENDPOINT}{quote_plus(query)}",
+            timeout=self.timeout_seconds,
+            headers=DEFAULT_HEADERS,
+            follow_redirects=True,
+        )
+        response.raise_for_status()
+        root = ET.fromstring(response.text)
+
+        candidates: list[dict[str, Any]] = []
+        for item in root.findall("./channel/item"):
+            url = (item.findtext("link") or "").strip()
+            title = self._clean_html(item.findtext("title") or "")
+            if not url:
+                continue
+            domain = urlparse(url).netloc.lower()
+            candidates.append(
+                {
+                    "title": title,
+                    "url": url,
+                    "domain": domain,
+                    "score": self._domain_score(domain),
+                }
+            )
+
+        candidates.sort(key=lambda item: item["score"], reverse=True)
+        return candidates[: self.max_results * 2]
+
+    def _search_duckduckgo(self, query: str) -> list[dict[str, Any]]:
         response = httpx.get(
             f"{SEARCH_ENDPOINT}?q={quote_plus(query)}",
             timeout=self.timeout_seconds,
@@ -120,8 +161,10 @@ class WebRetriever:
             score += 5
         if domain.endswith(".gov.cn"):
             score += 5
-        if any(token in domain for token in ["gaokao.cn", "haeea.cn", "zsks", "admission"]):
+        if any(token in domain for token in ["gaokao.cn", "haeea.cn", "zsks", "admission", "eea", "eaagz"]):
             score += 4
+        if domain.endswith(".cn"):
+            score += 1
         if any(token in domain for token in ["edu", "university", "college"]):
             score += 2
         return score

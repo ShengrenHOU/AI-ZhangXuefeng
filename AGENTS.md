@@ -12,6 +12,9 @@ This file applies to everything under `E:/research_projects/gaokao-mvp`.
 - Published knowledge must be the primary recommendation context.
 - Code should keep minimal hard guardrails, provenance, and auditability instead of replacing the model as the main recommender.
 - Every recommendation item must keep at least one `source_id`.
+- The product primarily serves Chinese students and families.
+- Assume a China-based network environment for retrieval choices and operational defaults.
+- Prefer China-friendly search sources and prioritize Chinese official/education domains such as `gov.cn`, `edu.cn`, provincial examination authorities, and university admissions sites.
 - Use English filenames only.
 
 ## Write Targets
