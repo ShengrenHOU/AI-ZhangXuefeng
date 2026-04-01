@@ -7,7 +7,7 @@ from recommendation_core import RecommendationCore
 from recommendation_core.models import RecommendationRequest, StudentDossier
 
 from .config import settings
-from .db import Base, engine
+from .db import Base, engine, ensure_schema_compatibility
 from .llm import ArkCodingPlanClient
 from .repository import FeedbackRepository, SessionRepository
 from .schemas import (
@@ -24,6 +24,7 @@ from .schemas import (
 from .state_machine import SessionStateMachine
 
 Base.metadata.create_all(bind=engine)
+ensure_schema_compatibility()
 
 app = FastAPI(title="Gaokao Assistant API", version="0.1.0")
 app.add_middleware(
