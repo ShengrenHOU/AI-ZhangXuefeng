@@ -26,6 +26,7 @@ class SessionStartResponse(BaseModel):
     readiness: ReadinessResponse
     pending_recommendation_confirmation: bool
     field_provenance: dict[str, str]
+    recommendation: RecommendationRun | None = None
 
 
 class SessionSnapshotResponse(BaseModel):
@@ -36,6 +37,7 @@ class SessionSnapshotResponse(BaseModel):
     readiness: ReadinessResponse
     pending_recommendation_confirmation: bool
     field_provenance: dict[str, str]
+    recommendation: RecommendationRun | None = None
 
 
 class ChatMessageRequest(BaseModel):

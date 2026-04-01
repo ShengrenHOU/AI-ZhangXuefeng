@@ -13,6 +13,8 @@ class SessionRepository:
         messages: list[dict],
         pending_recommendation_confirmation: bool = False,
         field_provenance: dict | None = None,
+        recommendation: dict | None = None,
+        recommendation_fingerprint: str | None = None,
     ) -> SessionStateModel:
         with session_scope() as session:
             model = SessionStateModel(
@@ -22,6 +24,8 @@ class SessionRepository:
                 messages=messages,
                 pending_recommendation_confirmation=pending_recommendation_confirmation,
                 field_provenance=field_provenance or {},
+                recommendation=recommendation,
+                recommendation_fingerprint=recommendation_fingerprint,
             )
             session.add(model)
             session.flush()
@@ -40,6 +44,8 @@ class SessionRepository:
         messages: list[dict],
         pending_recommendation_confirmation: bool | None = None,
         field_provenance: dict | None = None,
+        recommendation: dict | None = None,
+        recommendation_fingerprint: str | None = None,
     ) -> SessionStateModel | None:
         with session_scope() as session:
             model = session.get(SessionStateModel, thread_id)
@@ -52,6 +58,10 @@ class SessionRepository:
                 model.pending_recommendation_confirmation = pending_recommendation_confirmation
             if field_provenance is not None:
                 model.field_provenance = field_provenance
+            if recommendation is not None:
+                model.recommendation = recommendation
+            if recommendation_fingerprint is not None:
+                model.recommendation_fingerprint = recommendation_fingerprint
             session.add(model)
             session.flush()
             session.refresh(model)

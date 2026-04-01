@@ -54,7 +54,9 @@ class ArkCodingPlanClient:
     """
 
     def __init__(self) -> None:
-        self.model = settings.ark_model
+        self.instant_model = settings.ark_instant_model or settings.ark_model
+        self.deepthink_model = settings.ark_deepthink_model or settings.ark_model
+        self.model = self.instant_model
         self.base_url = settings.ark_base_url
         self.schemas = StructuredOutputSchemas()
         self._client = OpenAI(api_key=settings.ark_api_key, base_url=self.base_url) if settings.ark_api_key and settings.enable_live_llm else None
@@ -95,10 +97,10 @@ class ArkCodingPlanClient:
         ]
 
         completion = self._client.chat.completions.create(
-            model=self.model,
+            model=self.instant_model,
             messages=messages,
-            max_completion_tokens=700,
-            temperature=0.2,
+            max_completion_tokens=420,
+            temperature=0.15,
             top_p=0.9,
             stream=False,
             response_format={"type": "json_object"},
@@ -148,7 +150,7 @@ class ArkCodingPlanClient:
                 )
 
             completion = self._client.chat.completions.create(
-                model=self.model,
+                model=self.deepthink_model,
                 messages=messages,
                 max_completion_tokens=1400,
                 temperature=0.2 if attempt == 0 else 0.1,

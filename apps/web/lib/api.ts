@@ -63,6 +63,7 @@ export type SessionSnapshot = {
   readiness: UiReadiness;
   pendingRecommendationConfirmation: boolean;
   fieldProvenance: FieldProvenance;
+  recommendation: UiRecommendationRun | null;
 };
 
 export type ChatResult = {
@@ -206,7 +207,8 @@ export async function startSession(): Promise<SessionSnapshot> {
     messages: [],
     readiness: mapReadiness(payload.readiness),
     pendingRecommendationConfirmation: payload.pending_recommendation_confirmation,
-    fieldProvenance: payload.field_provenance ?? {}
+    fieldProvenance: payload.field_provenance ?? {},
+    recommendation: payload.recommendation ? mapRecommendation(payload.recommendation) : null
   };
 }
 
@@ -219,7 +221,8 @@ export async function getSession(threadId: string): Promise<SessionSnapshot> {
     messages: payload.messages ?? [],
     readiness: mapReadiness(payload.readiness),
     pendingRecommendationConfirmation: payload.pending_recommendation_confirmation,
-    fieldProvenance: payload.field_provenance ?? {}
+    fieldProvenance: payload.field_provenance ?? {},
+    recommendation: payload.recommendation ? mapRecommendation(payload.recommendation) : null
   };
 }
 

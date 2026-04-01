@@ -58,6 +58,7 @@ def test_session_flow_and_dossier_endpoint() -> None:
     assert len(snapshot.json()["messages"]) >= 4
     assert snapshot.json()["readiness"]["level"] == "ready_for_recommendation"
     assert snapshot.json()["field_provenance"]
+    assert snapshot.json()["recommendation"] is not None
 
 
 def test_healthcheck() -> None:

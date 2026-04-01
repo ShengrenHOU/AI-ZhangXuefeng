@@ -76,10 +76,6 @@ function cityLabel(value: string) {
   return mapping[value] ?? value;
 }
 
-function chineseValue(value: string | number | null | undefined, fallback = "待补充") {
-  return value ?? fallback;
-}
-
 function readinessHeadline(readiness: UiReadiness, pendingRecommendationConfirmation: boolean) {
   if (pendingRecommendationConfirmation && readiness.level === "ready_for_recommendation") {
     return "你的核心条件已经比较完整，我先帮你确认一遍，再开始正式推荐。";
@@ -120,13 +116,52 @@ function completenessSummary(dossier: UiDossier | null) {
   return `${complete}/${MINIMUM_KEYS.length} 项核心条件已到位`;
 }
 
-function DossierItem({ label, value }: { label: string; value: string | number | null | undefined }) {
-  return (
-    <div className="dossier-item">
-      <span>{label}</span>
-      <strong>{chineseValue(value)}</strong>
-    </div>
-  );
+function buildConfirmedChips(dossier: UiDossier | null, readiness: UiReadiness) {
+  if (!dossier) {
+    return [];
+  }
+
+  const chips: string[] = [];
+  if (dossier.province) chips.push(`省份：${dossier.province === "henan" ? "河南" : dossier.province}`);
+  if (dossier.targetYear) chips.push(`年份：${dossier.targetYear}`);
+  if (dossier.rank != null) chips.push(`位次：${dossier.rank}`);
+  else if (dossier.score != null) chips.push(`分数：${dossier.score}`);
+  if (dossier.subjectCombination?.length) chips.push(`选科：${dossier.subjectCombination.map(subjectLabel).join("、")}`);
+  if (dossier.majorInterests?.length) chips.push(`倾向：${dossier.majorInterests.map(interestLabel).join("、")}`);
+  if (dossier.familyConstraints?.annualBudgetCny != null) chips.push(`预算：${dossier.familyConstraints.annualBudgetCny} 元/年`);
+  if (dossier.familyConstraints?.distancePreference === "near_home") chips.push("希望离家近");
+  if (dossier.familyConstraints?.distancePreference === "nationwide") chips.push("全国都可");
+  if (dossier.familyConstraints?.adjustmentAccepted === true) chips.push("接受调剂");
+  if (dossier.familyConstraints?.adjustmentAccepted === false) chips.push("不接受调剂");
+  if (dossier.riskAppetite === "conservative") chips.push("偏稳");
+  if (dossier.riskAppetite === "balanced") chips.push("平衡");
+  if (dossier.riskAppetite === "aggressive") chips.push("偏冲");
+  if (dossier.familyConstraints?.cityPreference?.length) chips.push(`城市：${dossier.familyConstraints.cityPreference.map(cityLabel).join("、")}`);
+  if (readiness.missingLabels.length > 0) chips.push(`还缺：${readiness.missingLabels.slice(0, 2).join("、")}`);
+  return chips.slice(0, 8);
+}
+
+function loadingCopy(params: {
+  hasRecommendation: boolean;
+  pendingRecommendationConfirmation: boolean;
+  readiness: UiReadiness;
+}) {
+  if (params.hasRecommendation) {
+    return {
+      title: "正在根据新条件重排建议",
+      body: "我会先复用已确认档案，再决定哪些建议应该保留、替换或下调风险。",
+    };
+  }
+  if (params.pendingRecommendationConfirmation || params.readiness.level === "ready_for_recommendation") {
+    return {
+      title: "正在检索已发布知识并生成建议",
+      body: "这一阶段会比普通追问慢一些，因为我会先读知识，再组织正式推荐。",
+    };
+  }
+  return {
+    title: "正在理解你的条件",
+    body: "我先把你刚刚补充的信息并入档案，再决定下一步继续追问还是开始推荐。",
+  };
 }
 
 function ResultCard({ item }: { item: RecommendationItem }) {
@@ -141,7 +176,7 @@ function ResultCard({ item }: { item: RecommendationItem }) {
       </div>
 
       <p className="recommendation-summary">{item.parentSummary}</p>
-      <div className="chip-row" style={{ marginBottom: 8 }}>
+      <div className="chip-row recommendation-meta">
         <span className="chip neutral">城市：{cityLabel(item.city)}</span>
         <span className="chip neutral">学费：{item.tuitionCny} 元/年</span>
       </div>
@@ -189,9 +224,32 @@ function FollowUpCard({ readiness, nextQuestion }: { readiness: UiReadiness; nex
   );
 }
 
+function RecommendationSummaryBar({ items }: { items: RecommendationItem[] }) {
+  return (
+    <section className="recommendation-overview panel">
+      <div className="recommendation-overview-head">
+        <div>
+          <div className="assistant-name">当前 shortlist</div>
+          <p className="section-desc">推荐已经生成了。后面你继续补条件，我会在原地帮你重排。</p>
+        </div>
+      </div>
+      <div className="overview-row">
+        {items.slice(0, 3).map((item) => (
+          <div className="overview-pill" key={item.programId}>
+            <span className={`bucket ${item.bucket}`}>{BUCKET_LABELS[item.bucket]}</span>
+            <div>
+              <strong>{item.schoolName}</strong>
+              <span>{item.programName}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export function ChatShell() {
   const [threadId, setThreadId] = useState<string | null>(null);
-  const [state, setState] = useState<string>("booting");
   const [dossier, setDossier] = useState<UiDossier | null>(null);
   const [messages, setMessages] = useState<{ role: string; content: string }[]>([]);
   const [draft, setDraft] = useState(INITIAL_DRAFT);
@@ -226,11 +284,11 @@ export function ChatShell() {
 
         window.localStorage.setItem(THREAD_STORAGE_KEY, session.threadId);
         setThreadId(session.threadId);
-        setState(session.state);
         setDossier(session.dossier);
         setMessages(session.messages);
         setReadiness(session.readiness);
         setPendingRecommendationConfirmation(session.pendingRecommendationConfirmation);
+        setRecommendation(session.recommendation);
       } catch (sessionError) {
         if (!disposed) {
           setError(sessionError instanceof Error ? sessionError.message : "会话初始化失败");
@@ -254,7 +312,6 @@ export function ChatShell() {
     setDraft("");
     try {
       const result: ChatResult = await sendMessage(threadId, outgoing);
-      setState(result.state);
       setDossier(result.dossier);
       setReadiness(result.readiness);
       setReasoningSummary(result.modelAction.reasoningSummary);
@@ -262,7 +319,7 @@ export function ChatShell() {
       setLastNextQuestion(result.modelAction.nextQuestion ?? null);
       setPendingRecommendationConfirmation(result.pendingRecommendationConfirmation);
       setMessages((current) => [...current, { role: "assistant", content: result.assistantMessage }]);
-      setRecommendation(result.recommendation);
+      setRecommendation(result.recommendation ?? recommendation);
     } catch (sendError) {
       setMessages((current) => current.slice(0, -1));
       setDraft(outgoing);
@@ -273,7 +330,6 @@ export function ChatShell() {
   }
 
   const items = recommendation?.items ?? [];
-  const familyConstraints = dossier?.familyConstraints;
   const readinessView = readiness ?? {
     level: "insufficient_info" as ReadinessLevel,
     canRecommend: false,
@@ -281,7 +337,13 @@ export function ChatShell() {
     missingLabels: [],
     conflicts: [],
   };
-
+  const hasConversation = messages.length > 0;
+  const loadingStatus = loadingCopy({
+    hasRecommendation: items.length > 0,
+    pendingRecommendationConfirmation,
+    readiness: readinessView,
+  });
+  const confirmedChips = useMemo(() => buildConfirmedChips(dossier, readinessView), [dossier, readinessView]);
   const groupedItems = useMemo(
     () => ({
       reach: items.filter((item) => item.bucket === "reach"),
@@ -300,22 +362,35 @@ export function ChatShell() {
             {READINESS_TEXT[readinessView.level]}
           </div>
         </div>
-        <h1 className="assistant-headline compact">{readinessHeadline(readinessView, pendingRecommendationConfirmation)}</h1>
-        <p className="assistant-subline compact">{reasoningSummary}</p>
+
+        {hasConversation ? (
+          <div className="conversation-status">
+            <div className="conversation-status-title">{readinessHeadline(readinessView, pendingRecommendationConfirmation)}</div>
+            <p className="assistant-subline compact">{reasoningSummary}</p>
+          </div>
+        ) : (
+          <>
+            <h1 className="assistant-headline compact">{readinessHeadline(readinessView, pendingRecommendationConfirmation)}</h1>
+            <p className="assistant-subline compact">{reasoningSummary}</p>
+          </>
+        )}
+
         <div className="top-chip-row">
           <span className="chip neutral">档案进度：{completenessSummary(dossier)}</span>
-          {readinessView.missingLabels.slice(0, 3).map((label) => (
+          {readinessView.missingLabels.slice(0, 2).map((label) => (
             <span className="chip neutral" key={label}>
               待补充：{label}
             </span>
           ))}
-          {readinessView.conflicts.slice(0, 2).map((conflict) => (
+          {readinessView.conflicts.slice(0, 1).map((conflict) => (
             <span className="chip caution" key={conflict.code}>
               需要澄清
             </span>
           ))}
         </div>
         {error ? <p className="error-text">{error}</p> : null}
+
+        {items.length > 0 ? <RecommendationSummaryBar items={items} /> : null}
 
         <div className="chat-list">
           {messages.length === 0 ? (
@@ -351,6 +426,16 @@ export function ChatShell() {
               </div>
             );
           })}
+
+          {loading ? (
+            <div className="message assistant">
+              <div className="message-role">{THREAD_LABELS.assistant}</div>
+              <div className="assistant-card loading-card">
+                <div className="assistant-card-title">{loadingStatus.title}</div>
+                <p>{loadingStatus.body}</p>
+              </div>
+            </div>
+          ) : null}
         </div>
 
         <div className="composer">
@@ -370,88 +455,28 @@ export function ChatShell() {
           />
           <div className="composer-footer">
             <button className="primary-button" type="button" onClick={() => void handleSendMessage(draft)} disabled={loading || !threadId}>
-              {loading ? "正在整理条件…" : "发送"}
+              {loading ? "处理中…" : "发送"}
             </button>
-            <span className="composer-tip">只需要继续聊天就行；如果我还缺关键信息，我会继续追问你。</span>
+            <span className="composer-tip">每一轮普通追问会优先快速返回；正式推荐会先检索知识，再慢一点给你结构化结果。</span>
           </div>
         </div>
       </section>
 
-      <section className="summary-strip panel">
-        <div className="summary-strip-head">
-          <div className="section-title">当前已确认信息</div>
-          <span className="section-desc">这是我现在已经确认下来的条件，后面你补充新信息时我会继续更新。</span>
+      <section className="summary-strip panel compact">
+        <div className="summary-strip-head compact">
+          <div>
+            <div className="section-title">当前已确认信息</div>
+            <span className="section-desc">默认只保留摘要，不再占据大块首屏空间。</span>
+          </div>
+          <span className="chip neutral">{completenessSummary(dossier)}</span>
         </div>
-        <div className="summary-columns">
-          <div className="summary-grid">
-            <DossierItem label="省份" value={dossier?.province === "henan" ? "河南" : dossier?.province} />
-            <DossierItem label="年份" value={dossier?.targetYear} />
-            <DossierItem label="位次" value={dossier?.rank} />
-            <DossierItem label="分数" value={dossier?.score} />
-            <DossierItem label="风险偏好" value={dossier?.riskAppetite === "conservative" ? "偏稳" : dossier?.riskAppetite === "balanced" ? "平衡" : dossier?.riskAppetite === "aggressive" ? "偏冲" : null} />
-            <DossierItem label="预算" value={familyConstraints?.annualBudgetCny ? `${familyConstraints.annualBudgetCny} 元/年` : null} />
-          </div>
-
-          <div className="summary-compact">
-            <div className="summary-section">
-              <label>选科组合</label>
-              <div className="chip-row">
-                {(dossier?.subjectCombination ?? []).length === 0 ? <span className="chip neutral">待补充</span> : null}
-                {(dossier?.subjectCombination ?? []).map((item) => (
-                  <span className="chip neutral" key={item}>
-                    {subjectLabel(item)}
-                  </span>
-                ))}
-              </div>
-            </div>
-
-            <div className="summary-section">
-              <label>专业倾向</label>
-              <div className="chip-row">
-                {(dossier?.majorInterests ?? []).length === 0 ? <span className="chip neutral">待补充</span> : null}
-                {(dossier?.majorInterests ?? []).map((item) => (
-                  <span className="chip neutral" key={item}>
-                    {interestLabel(item)}
-                  </span>
-                ))}
-              </div>
-            </div>
-
-            <div className="summary-section">
-              <label>家庭约束</label>
-              <div className="chip-row">
-                <span className="chip neutral">{familyConstraints?.distancePreference === "near_home" ? "希望离家近" : familyConstraints?.distancePreference === "balanced" ? "距离平衡" : familyConstraints?.distancePreference === "nationwide" ? "全国都可" : "距离待确认"}</span>
-                <span className="chip neutral">
-                  {familyConstraints?.adjustmentAccepted === true ? "接受调剂" : familyConstraints?.adjustmentAccepted === false ? "不接受调剂" : "调剂待确认"}
-                </span>
-                {(familyConstraints?.cityPreference ?? []).map((city) => (
-                  <span className="chip neutral" key={city}>
-                    {cityLabel(city)}
-                  </span>
-                ))}
-              </div>
-            </div>
-
-            <div className="summary-section">
-              <label>还缺什么</label>
-              <div className="chip-row">
-                {readinessView.missingLabels.length === 0 ? <span className="chip positive">核心条件已齐</span> : null}
-                {readinessView.missingLabels.map((label) => (
-                  <span className="chip caution" key={label}>
-                    {label}
-                  </span>
-                ))}
-              </div>
-            </div>
-
-            <div className="summary-section">
-              <label>接下来怎么继续</label>
-              <div className="shortcut-links">
-                <span>如果你想继续缩小范围，直接告诉我你更看重城市、专业、预算还是稳妥程度。</span>
-                <span>如果你想比较两条方案，也不用点工具，继续用自然语言告诉我就行。</span>
-              </div>
-            </div>
-          </div>
+        <div className="chip-row">
+          {confirmedChips.length === 0 ? <span className="chip neutral">你继续聊天，我会在这里同步更新已确认条件。</span> : null}
+          {confirmedChips.map((chip) => (
+            <span className="chip neutral" key={chip}>
+              {chip}
+            </span>
+          ))}
         </div>
       </section>
     </div>

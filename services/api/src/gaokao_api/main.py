@@ -51,6 +51,8 @@ def healthcheck() -> dict:
     return {
         "status": "ok",
         "model": settings.ark_model,
+        "instant_model": settings.ark_instant_model or settings.ark_model,
+        "deepthink_model": settings.ark_deepthink_model or settings.ark_model,
         "live_llm_enabled": settings.enable_live_llm,
         "knowledge_root": str(settings.knowledge_path),
     }
@@ -66,6 +68,8 @@ def start_session() -> SessionStartResponse:
         initial["messages"],
         pending_recommendation_confirmation=initial["pending_recommendation_confirmation"],
         field_provenance=initial["field_provenance"],
+        recommendation=None,
+        recommendation_fingerprint=None,
     )
     return SessionStartResponse(
         thread_id=initial["thread_id"],
@@ -74,6 +78,7 @@ def start_session() -> SessionStartResponse:
         readiness=initial["readiness"],
         pending_recommendation_confirmation=initial["pending_recommendation_confirmation"],
         field_provenance=initial["field_provenance"],
+        recommendation=None,
     )
 
 
@@ -90,6 +95,8 @@ def send_message(thread_id: str, payload: ChatMessageRequest) -> ChatMessageResp
         "messages": existing.messages,
         "pending_recommendation_confirmation": existing.pending_recommendation_confirmation,
         "field_provenance": existing.field_provenance,
+        "recommendation": existing.recommendation,
+        "recommendation_fingerprint": existing.recommendation_fingerprint,
     }
     result = state_machine.handle_message(state, payload.content)
     session_repo.update(
@@ -99,6 +106,8 @@ def send_message(thread_id: str, payload: ChatMessageRequest) -> ChatMessageResp
         state["messages"],
         pending_recommendation_confirmation=result["pending_recommendation_confirmation"],
         field_provenance=result["field_provenance"],
+        recommendation=result["recommendation"] if result["recommendation"] is not None else existing.recommendation,
+        recommendation_fingerprint=result["recommendation_fingerprint"],
     )
 
     return ChatMessageResponse(
@@ -110,7 +119,7 @@ def send_message(thread_id: str, payload: ChatMessageRequest) -> ChatMessageResp
         readiness=result["readiness"],
         pending_recommendation_confirmation=result["pending_recommendation_confirmation"],
         field_provenance=result["field_provenance"],
-        recommendation=result["recommendation"],
+        recommendation=result["recommendation"] if result["recommendation"] is not None else existing.recommendation,
     )
 
 
@@ -135,6 +144,7 @@ def get_session(thread_id: str) -> SessionSnapshotResponse:
         readiness=state_machine.evaluate_dossier(StudentDossier(**existing.dossier)),
         pending_recommendation_confirmation=existing.pending_recommendation_confirmation,
         field_provenance=existing.field_provenance,
+        recommendation=existing.recommendation,
     )
 
 

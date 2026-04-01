@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import uuid
 from dataclasses import dataclass
@@ -145,6 +147,8 @@ class SessionStateMachine:
         dossier = StudentDossier(**state["dossier"])
         existing_provenance = dict(state.get("field_provenance", {}))
         pending_recommendation_confirmation = bool(state.get("pending_recommendation_confirmation", False))
+        cached_recommendation = state.get("recommendation")
+        cached_recommendation_fingerprint = state.get("recommendation_fingerprint")
 
         deterministic_patch, deterministic_provenance = self._extract_patch(content)
         draft_dossier = self._merge_dossier(dossier, deterministic_patch)
@@ -186,7 +190,12 @@ class SessionStateMachine:
             next_question = "好，我们先不正式推荐。你最想先改哪一项条件？比如位次、选科、预算，或者你更在意离家近和城市本身哪个。"
             assistant_message = next_question
         elif pending_recommendation_confirmation and readiness["can_recommend"] and self._is_affirmation(content):
-            recommendation, recommendation_summary = self._run_recommendation(state["thread_id"], dossier)
+            recommendation_fingerprint = self._recommendation_fingerprint(dossier)
+            if cached_recommendation and cached_recommendation_fingerprint == recommendation_fingerprint:
+                recommendation = cached_recommendation
+                recommendation_summary = "你确认过的条件没有变化，我继续沿用刚才这版正式建议。"
+            else:
+                recommendation, recommendation_summary = self._run_recommendation(state["thread_id"], dossier)
             action = "explain_results"
             state_name = "result_explanation"
             pending_recommendation_confirmation = False
@@ -227,6 +236,7 @@ class SessionStateMachine:
             "readiness": readiness,
             "pending_recommendation_confirmation": pending_recommendation_confirmation,
             "field_provenance": field_provenance,
+            "recommendation_fingerprint": self._recommendation_fingerprint(dossier) if recommendation is not None else cached_recommendation_fingerprint,
             "model_action": {
                 "action": action,
                 "dossierPatch": patch.model_dump(exclude_none=True, exclude_defaults=True),
@@ -482,7 +492,7 @@ class SessionStateMachine:
             trace_id=str(uuid.uuid4()),
             rules_version="guardrails-v0.2.0",
             knowledge_version=knowledge_version,
-            model_version=self.planner_client.model if self.planner_client and self.planner_client.is_configured() else "knowledge-first-fallback",
+            model_version=self.planner_client.deepthink_model if self.planner_client and self.planner_client.is_configured() else "knowledge-first-fallback",
             items=decisions,
         )
 
@@ -665,6 +675,23 @@ class SessionStateMachine:
             "risk_appetite" if dossier.risk_appetite else "",
         ]
         return [item for item in paths if item]
+
+    def _recommendation_fingerprint(self, dossier: StudentDossier) -> str:
+        payload = json.dumps(
+            {
+                "province": dossier.province,
+                "target_year": dossier.target_year,
+                "rank": dossier.rank,
+                "score": dossier.score,
+                "subject_combination": dossier.subject_combination,
+                "major_interests": dossier.major_interests,
+                "family_constraints": dossier.family_constraints.model_dump(),
+                "risk_appetite": dossier.risk_appetite,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        return hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
     def _guidance_before_recommendation(self, action: str, readiness: dict[str, Any], next_question: str | None) -> str | None:
         if action != "ask_followup":

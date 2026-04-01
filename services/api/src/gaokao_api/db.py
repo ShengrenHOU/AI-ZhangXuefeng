@@ -31,6 +31,18 @@ def ensure_schema_compatibility() -> None:
             column_name="field_provenance",
             statement="ALTER TABLE session_states ADD COLUMN field_provenance JSON DEFAULT '{}'",
         )
+        _add_column_if_missing(
+            connection,
+            table_name="session_states",
+            column_name="recommendation",
+            statement="ALTER TABLE session_states ADD COLUMN recommendation JSON DEFAULT NULL",
+        )
+        _add_column_if_missing(
+            connection,
+            table_name="session_states",
+            column_name="recommendation_fingerprint",
+            statement="ALTER TABLE session_states ADD COLUMN recommendation_fingerprint VARCHAR(128) DEFAULT NULL",
+        )
 
 
 def _add_column_if_missing(connection, *, table_name: str, column_name: str, statement: str) -> None:

@@ -17,6 +17,8 @@ class SessionStateModel(Base):
     messages: Mapped[list] = mapped_column(JSON, default=list)
     pending_recommendation_confirmation: Mapped[bool] = mapped_column(default=False)
     field_provenance: Mapped[dict] = mapped_column(JSON, default=dict)
+    recommendation: Mapped[dict | None] = mapped_column(JSON, default=None, nullable=True)
+    recommendation_fingerprint: Mapped[str | None] = mapped_column(String(128), default=None, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
 
 
