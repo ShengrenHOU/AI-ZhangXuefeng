@@ -24,6 +24,17 @@ class SessionStartResponse(BaseModel):
     state: str
     dossier: StudentDossier
     readiness: ReadinessResponse
+    pending_recommendation_confirmation: bool
+    field_provenance: dict[str, str]
+    recommendation: RecommendationRun | None = None
+    recommendation_versions: list[dict] = Field(default_factory=list)
+    task_timeline: list[dict] = Field(default_factory=list)
+    recommendation_versions: list[dict] = Field(default_factory=list)
+    task_timeline: list[dict] = Field(default_factory=list)
+    recommendation_versions: list[dict] = Field(default_factory=list)
+    task_timeline: list[dict] = Field(default_factory=list)
+    recommendation_versions: list[dict] = Field(default_factory=list)
+    task_timeline: list[dict] = Field(default_factory=list)
 
 
 class SessionSnapshotResponse(BaseModel):
@@ -32,6 +43,17 @@ class SessionSnapshotResponse(BaseModel):
     dossier: StudentDossier
     messages: list[dict]
     readiness: ReadinessResponse
+    pending_recommendation_confirmation: bool
+    field_provenance: dict[str, str]
+    recommendation: RecommendationRun | None = None
+    recommendation_versions: list[dict] = Field(default_factory=list)
+    task_timeline: list[dict] = Field(default_factory=list)
+    recommendation_versions: list[dict] = Field(default_factory=list)
+    task_timeline: list[dict] = Field(default_factory=list)
+    recommendation_versions: list[dict] = Field(default_factory=list)
+    task_timeline: list[dict] = Field(default_factory=list)
+    recommendation_versions: list[dict] = Field(default_factory=list)
+    task_timeline: list[dict] = Field(default_factory=list)
 
 
 class ChatMessageRequest(BaseModel):
@@ -45,7 +67,22 @@ class ChatMessageResponse(BaseModel):
     dossier: StudentDossier
     model_action: dict
     readiness: ReadinessResponse
+    pending_recommendation_confirmation: bool
+    field_provenance: dict[str, str]
     recommendation: RecommendationRun | None = None
+    recommendation_versions: list[dict] = Field(default_factory=list)
+    task_timeline: list[dict] = Field(default_factory=list)
+    recommendation_versions: list[dict] = Field(default_factory=list)
+    task_timeline: list[dict] = Field(default_factory=list)
+
+
+class StreamMessageResponse(BaseModel):
+    event: str
+    payload: dict
+    recommendation_versions: list[dict] = Field(default_factory=list)
+    task_timeline: list[dict] = Field(default_factory=list)
+    recommendation_versions: list[dict] = Field(default_factory=list)
+    task_timeline: list[dict] = Field(default_factory=list)
 
 
 class ComparePayload(BaseModel):

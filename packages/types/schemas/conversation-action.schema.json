@@ -8,10 +8,13 @@
       "type": "string",
       "enum": [
         "ask_followup",
+        "directional_guidance",
         "update_dossier",
         "confirm_constraints",
-        "explain_results",
+        "recommend",
         "compare_options",
+        "refine_recommendation",
+        "explain_reasoning",
         "refuse"
       ]
     },
@@ -33,4 +36,3 @@
     }
   }
 }
-

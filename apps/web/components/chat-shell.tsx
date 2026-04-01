@@ -1,67 +1,193 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
-import type { ConflictNotice, ReadinessLevel, RecommendationBucket, RecommendationItem } from "@gaokao-mvp/types";
+import type { ReadinessLevel, RecommendationBucket, RecommendationItem } from "@gaokao-mvp/types";
 
-import { comparePrograms, getSession, sendMessage, startSession, type ChatResult, type SessionSnapshot, type UiDossier, type UiReadiness, type UiRecommendationRun } from "../lib/api";
+import {
+  getSession,
+  sendMessage,
+  sendStreamMessage,
+  startSession,
+  type ChatResult,
+  type SessionSnapshot,
+  type StreamEvent,
+  type UiDossier,
+  type UiReadiness,
+  type UiRecommendationRun,
+  type UiRecommendationVersion,
+  type UiTaskStep,
+} from "../lib/api";
 
-const THREAD_STORAGE_KEY = "gaokao-mvp-thread-id";
+const THREAD_STORAGE_KEY = "gaokao-mvp-thread-id:v4";
 const INITIAL_DRAFT = "我是河南考生，家里条件一般，想稳一点，最好离家近些，比较倾向电气或计算机。";
+const MINIMUM_KEYS = [
+  "province",
+  "target_year",
+  "rank_or_score",
+  "subject_combination",
+  "major_interests",
+  "budget",
+  "decision_anchor",
+];
 
 const BUCKET_LABELS: Record<RecommendationBucket, string> = {
   reach: "冲",
   match: "稳",
-  safe: "保"
+  safe: "保",
 };
 
 const READINESS_TEXT: Record<ReadinessLevel, string> = {
   insufficient_info: "信息还不够，先继续聊清楚",
   near_ready: "已经接近可以推荐，再补一点就够了",
-  ready_for_recommendation: "条件已成熟，可以给出正式推荐"
-};
-
-const READINESS_CLASS: Record<ReadinessLevel, string> = {
-  insufficient_info: "pending",
-  near_ready: "warming",
-  ready_for_recommendation: "ready"
+  ready_for_recommendation: "你的核心条件已经比较完整，我会先请你确认一遍再正式推荐。",
 };
 
 const THREAD_LABELS = {
   assistant: "高考志愿助手",
-  user: "你"
+  user: "你",
 };
 
-type ComparePreview = {
-  summary: string;
-  sourceIds: string[];
-} | null;
-
-function chineseValue(value: string | number | null | undefined, fallback = "待补充") {
-  return value ?? fallback;
+function subjectLabel(value: string) {
+  const mapping: Record<string, string> = {
+    physics: "物理",
+    chemistry: "化学",
+    biology: "生物",
+    history: "历史",
+    politics: "政治",
+    geography: "地理",
+  };
+  return mapping[value] ?? value;
 }
 
-function readinessHeadline(readiness: UiReadiness): string {
+function interestLabel(value: string) {
+  const mapping: Record<string, string> = {
+    computer_science: "计算机 / 软件 / AI",
+    engineering: "工科 / 电气 / 自动化",
+    education: "教育 / 师范",
+    finance: "金融 / 经管",
+    medicine: "医学 / 临床 / 护理",
+  };
+  return mapping[value] ?? value;
+}
+
+function cityLabel(value: string) {
+  const mapping: Record<string, string> = {
+    Zhengzhou: "郑州",
+    Xinyang: "信阳",
+    Xinxiang: "新乡",
+    Beijing: "北京",
+    Shanghai: "上海",
+    Guangzhou: "广州",
+    Shenzhen: "深圳",
+    Hangzhou: "杭州",
+    Nanjing: "南京",
+    Wuhan: "武汉",
+    Chengdu: "成都",
+    "Xi'an": "西安",
+  };
+  return mapping[value] ?? value;
+}
+
+function readinessHeadline(readiness: UiReadiness, pendingRecommendationConfirmation: boolean) {
+  if (pendingRecommendationConfirmation && readiness.level === "ready_for_recommendation") {
+    return "你的核心条件已经比较完整，我先帮你确认一遍，再开始正式推荐。";
+  }
   if (readiness.conflicts.length > 0) {
     return "我先帮你把冲突条件理顺，再继续推荐。";
   }
-  if (readiness.level === "ready_for_recommendation") {
-    return "你的核心条件已经比较完整，我可以先给你一版正式建议。";
-  }
   if (readiness.level === "near_ready") {
-    return "已经接近能推荐了，再补一两项关键条件会更稳。";
+    return "已经接近能推荐了，我会先给方向，再继续把关键条件补全。";
+  }
+  if (readiness.level === "ready_for_recommendation") {
+    return "你的核心条件已经比较完整，可以开始正式推荐了。";
   }
   return "先把学生情况和家庭约束聊清楚，再开始正式推荐。";
 }
 
-function DossierItem({ label, value }: { label: string; value: string | number | null | undefined }) {
-  return (
-    <div className="dossier-item">
-      <span>{label}</span>
-      <strong>{chineseValue(value)}</strong>
-    </div>
-  );
+function completenessSummary(dossier: UiDossier | null) {
+  if (!dossier) {
+    return `0/${MINIMUM_KEYS.length} 项核心条件已到位`;
+  }
+  const complete = MINIMUM_KEYS.filter((key) => {
+    if (key === "province") return Boolean(dossier.province);
+    if (key === "target_year") return Boolean(dossier.targetYear);
+    if (key === "rank_or_score") return dossier.rank != null || dossier.score != null;
+    if (key === "subject_combination") return Boolean(dossier.subjectCombination?.length);
+    if (key === "major_interests") return Boolean(dossier.majorInterests?.length);
+    if (key === "budget") return dossier.familyConstraints?.annualBudgetCny != null;
+    if (key === "decision_anchor") {
+      return Boolean(
+        dossier.familyConstraints?.distancePreference ||
+          dossier.familyConstraints?.adjustmentAccepted != null ||
+          dossier.familyConstraints?.cityPreference?.length ||
+          dossier.riskAppetite,
+      );
+    }
+    return false;
+  }).length;
+  return `${complete}/${MINIMUM_KEYS.length} 项核心条件已到位`;
+}
+
+function buildConfirmedChips(dossier: UiDossier | null, readiness: UiReadiness) {
+  if (!dossier) {
+    return [];
+  }
+
+  const chips: string[] = [];
+  if (dossier.province) chips.push(`省份：${dossier.province === "henan" ? "河南" : dossier.province}`);
+  if (dossier.targetYear) chips.push(`年份：${dossier.targetYear}`);
+  if (dossier.rank != null) chips.push(`位次：${dossier.rank}`);
+  else if (dossier.score != null) chips.push(`分数：${dossier.score}`);
+  if (dossier.subjectCombination?.length) chips.push(`选科：${dossier.subjectCombination.map(subjectLabel).join("、")}`);
+  if (dossier.majorInterests?.length) chips.push(`倾向：${dossier.majorInterests.map(interestLabel).join("、")}`);
+  if (dossier.familyConstraints?.annualBudgetCny != null) chips.push(`预算：${dossier.familyConstraints.annualBudgetCny} 元/年`);
+  if (dossier.familyConstraints?.distancePreference === "near_home") chips.push("希望离家近");
+  if (dossier.familyConstraints?.distancePreference === "nationwide") chips.push("全国都可");
+  if (dossier.familyConstraints?.adjustmentAccepted === true) chips.push("接受调剂");
+  if (dossier.familyConstraints?.adjustmentAccepted === false) chips.push("不接受调剂");
+  if (dossier.riskAppetite === "conservative") chips.push("偏稳");
+  if (dossier.riskAppetite === "balanced") chips.push("平衡");
+  if (dossier.riskAppetite === "aggressive") chips.push("偏冲");
+  if (dossier.familyConstraints?.cityPreference?.length) chips.push(`城市：${dossier.familyConstraints.cityPreference.map(cityLabel).join("、")}`);
+  if (readiness.missingLabels.length > 0) chips.push(`还缺：${readiness.missingLabels.slice(0, 2).join("、")}`);
+  return chips.slice(0, 8);
+}
+
+function loadingCopy(params: {
+  outgoing?: string;
+  hasRecommendation: boolean;
+  pendingRecommendationConfirmation: boolean;
+  readiness: UiReadiness;
+}) {
+  const outgoing = (params.outgoing ?? "").trim().toLowerCase();
+  const looksLikeRecommendationConfirmation =
+    params.pendingRecommendationConfirmation &&
+    (outgoing.includes("可以") ||
+      outgoing.includes("是的") ||
+      outgoing.includes("开始推荐") ||
+      outgoing.includes("推荐即可") ||
+      outgoing.includes("按照这些条件") ||
+      outgoing.includes("就按这些条件") ||
+      outgoing.includes("ok") ||
+      outgoing.includes("yes"));
+
+  if (looksLikeRecommendationConfirmation) {
+    return {
+      title: "正在检索已发布知识并生成建议",
+      body: "这一阶段会比普通追问慢一些，因为我会先读知识，再组织正式推荐。",
+    };
+  }
+  if (params.hasRecommendation && (outgoing.includes("对比") || outgoing.includes("比较") || outgoing.includes("为什么") || outgoing.includes("详细") || outgoing.includes("展开"))) {
+    return {
+      title: "正在做更深入的分析",
+      body: "我会结合你当前 shortlist，把差异和取舍讲得更清楚。",
+    };
+  }
+  return {
+    title: "正在理解你的条件",
+    body: "我先把你刚刚补充的信息并入档案，再决定下一步继续追问还是开始推荐。",
+  };
 }
 
 function ResultCard({ item }: { item: RecommendationItem }) {
@@ -76,8 +202,8 @@ function ResultCard({ item }: { item: RecommendationItem }) {
       </div>
 
       <p className="recommendation-summary">{item.parentSummary}</p>
-      <div className="chip-row" style={{ marginBottom: 8 }}>
-        <span className="chip neutral">城市：{item.city}</span>
+      <div className="chip-row recommendation-meta">
+        <span className="chip neutral">城市：{cityLabel(item.city)}</span>
         <span className="chip neutral">学费：{item.tuitionCny} 元/年</span>
       </div>
 
@@ -102,14 +228,6 @@ function ResultCard({ item }: { item: RecommendationItem }) {
           ))}
         </div>
       </div>
-
-      <div className="link-row">
-        {item.sourceIds.map((sourceId) => (
-          <Link className="text-link" href={`/sources/${sourceId}`} key={sourceId}>
-            查看依据：{sourceId}
-          </Link>
-        ))}
-      </div>
     </article>
   );
 }
@@ -132,31 +250,56 @@ function FollowUpCard({ readiness, nextQuestion }: { readiness: UiReadiness; nex
   );
 }
 
-function ConflictCard({ conflicts }: { conflicts: ConflictNotice[] }) {
+function RecommendationSummaryBar({ items, versions }: { items: RecommendationItem[]; versions: UiRecommendationVersion[] }) {
   return (
-    <div className="assistant-card conflict-card">
-      <div className="assistant-card-title">我先帮你澄清一个冲突点</div>
-      {conflicts.map((conflict) => (
-        <p key={conflict.code}>{conflict.message}</p>
-      ))}
-    </div>
+    <section className="recommendation-overview panel">
+      <div className="recommendation-overview-head">
+        <div>
+          <div className="assistant-name">当前 shortlist</div>
+          <p className="section-desc">推荐已经生成了。后面你继续补条件，我会在原地帮你重排。</p>
+        </div>
+        {versions.length > 0 ? (
+          <div className="chip-row">
+            {versions.map((version) => (
+              <span className="chip neutral" key={version.traceId}>
+                {version.label}
+              </span>
+            ))}
+          </div>
+        ) : null}
+      </div>
+      <div className="overview-row">
+        {items.slice(0, 3).map((item) => (
+          <div className="overview-pill" key={item.programId}>
+            <span className={`bucket ${item.bucket}`}>{BUCKET_LABELS[item.bucket]}</span>
+            <div>
+              <strong>{item.schoolName}</strong>
+              <span>{item.programName}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
 export function ChatShell() {
   const [threadId, setThreadId] = useState<string | null>(null);
-  const [state, setState] = useState<string>("booting");
   const [dossier, setDossier] = useState<UiDossier | null>(null);
   const [messages, setMessages] = useState<{ role: string; content: string }[]>([]);
   const [draft, setDraft] = useState(INITIAL_DRAFT);
   const [recommendation, setRecommendation] = useState<UiRecommendationRun | null>(null);
+  const [recommendationVersions, setRecommendationVersions] = useState<UiRecommendationVersion[]>([]);
+  const [taskTimeline, setTaskTimeline] = useState<UiTaskStep[]>([]);
+  const [streamedItems, setStreamedItems] = useState<RecommendationItem[]>([]);
   const [readiness, setReadiness] = useState<UiReadiness | null>(null);
   const [reasoningSummary, setReasoningSummary] = useState<string>("我会先通过多轮对话把关键信息补完整，再开始正式推荐。");
   const [lastAction, setLastAction] = useState<string>("ask_followup");
   const [lastNextQuestion, setLastNextQuestion] = useState<string | null>(null);
-  const [comparePreview, setComparePreview] = useState<ComparePreview>(null);
+  const [pendingRecommendationConfirmation, setPendingRecommendationConfirmation] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
+  const [loadingInput, setLoadingInput] = useState<string>("");
 
   useEffect(() => {
     let disposed = false;
@@ -176,15 +319,17 @@ export function ChatShell() {
         } else {
           session = await startSession();
         }
-        if (disposed) {
-          return;
-        }
+        if (disposed) return;
+
         window.localStorage.setItem(THREAD_STORAGE_KEY, session.threadId);
         setThreadId(session.threadId);
-        setState(session.state);
         setDossier(session.dossier);
         setMessages(session.messages);
         setReadiness(session.readiness);
+        setPendingRecommendationConfirmation(session.pendingRecommendationConfirmation);
+        setRecommendation(session.recommendation);
+        setRecommendationVersions(session.recommendationVersions);
+        setTaskTimeline(session.taskTimeline);
       } catch (sessionError) {
         if (!disposed) {
           setError(sessionError instanceof Error ? sessionError.message : "会话初始化失败");
@@ -198,234 +343,224 @@ export function ChatShell() {
     };
   }, []);
 
-  useEffect(() => {
-    let disposed = false;
-    async function loadComparePreview() {
-      if (!recommendation || recommendation.items.length < 2) {
-        setComparePreview(null);
-        return;
-      }
-      try {
-        const preview = await comparePrograms(recommendation.items[0].programId, recommendation.items[1].programId);
-        if (!disposed) {
-          setComparePreview(preview);
-        }
-      } catch {
-        if (!disposed) {
-          setComparePreview(null);
-        }
-      }
-    }
-    void loadComparePreview();
-    return () => {
-      disposed = true;
-    };
-  }, [recommendation]);
-
-  async function handleSend() {
-    if (!threadId || !draft.trim() || loading) {
+  async function handleSendMessage(outgoing: string) {
+    if (!threadId || !outgoing.trim() || loading) {
       return;
     }
     setLoading(true);
+    setLoadingInput(outgoing);
     setError(null);
-    setMessages((current) => [...current, { role: "user", content: draft }]);
-    const outgoing = draft;
+    setStreamedItems([]);
+    setMessages((current) => [...current, { role: "user", content: outgoing }]);
     setDraft("");
+
     try {
-      const result: ChatResult = await sendMessage(threadId, outgoing);
-      setState(result.state);
-      setDossier(result.dossier);
-      setReadiness(result.readiness);
-      setReasoningSummary(result.modelAction.reasoningSummary);
-      setLastAction(result.modelAction.action);
-      setLastNextQuestion(result.modelAction.nextQuestion ?? null);
-      setMessages((current) => [...current, { role: "assistant", content: result.assistantMessage }]);
-      setRecommendation(result.recommendation);
-    } catch (sendError) {
-      setMessages((current) => current.slice(0, -1));
-      setDraft(outgoing);
-      setError(sendError instanceof Error ? sendError.message : "发送消息失败");
+      await sendStreamMessage(threadId, outgoing, (event: StreamEvent) => {
+        if (event.event === "task_step") {
+          setTaskTimeline((current) => [...current.filter((step) => step.step !== event.data.step), event.data]);
+          return;
+        }
+        if (event.event === "recommendation_delta") {
+          const item = event.data as RecommendationItem;
+          setStreamedItems((current) => [...current, item]);
+          return;
+        }
+        if (event.event === "final_message") {
+          const payload = event.data;
+          setDossier(payload.dossier);
+          setReadiness(payload.readiness);
+          setReasoningSummary(payload.modelAction.reasoningSummary);
+          setLastAction(payload.modelAction.action);
+          setLastNextQuestion(payload.modelAction.nextQuestion ?? null);
+          setPendingRecommendationConfirmation(payload.pendingRecommendationConfirmation);
+          setMessages((current) => [...current, { role: "assistant", content: payload.assistantMessage }]);
+          setRecommendation(payload.recommendation);
+          setRecommendationVersions(payload.recommendationVersions ?? []);
+          setTaskTimeline(payload.taskTimeline ?? []);
+        }
+      });
+    } catch {
+      try {
+        const result: ChatResult = await sendMessage(threadId, outgoing);
+        setDossier(result.dossier);
+        setReadiness(result.readiness);
+        setReasoningSummary(result.modelAction.reasoningSummary);
+        setLastAction(result.modelAction.action);
+        setLastNextQuestion(result.modelAction.nextQuestion ?? null);
+        setPendingRecommendationConfirmation(result.pendingRecommendationConfirmation);
+        setMessages((current) => [...current, { role: "assistant", content: result.assistantMessage }]);
+        setRecommendation(result.recommendation);
+        setRecommendationVersions(result.recommendationVersions);
+        setTaskTimeline(result.taskTimeline);
+      } catch (sendError) {
+        setMessages((current) => current.slice(0, -1));
+        setDraft(outgoing);
+        setError(sendError instanceof Error ? sendError.message : "发送消息失败");
+      }
     } finally {
       setLoading(false);
+      setLoadingInput("");
     }
   }
 
-  const items = recommendation?.items ?? [];
-  const familyConstraints = dossier?.familyConstraints;
+  const items = streamedItems.length > 0 ? streamedItems : recommendation?.items ?? [];
   const readinessView = readiness ?? {
     level: "insufficient_info" as ReadinessLevel,
     canRecommend: false,
     missingFields: [],
     missingLabels: [],
-    conflicts: []
+    conflicts: [],
   };
-
-  const groupedItems = useMemo(() => {
-    return {
+  const hasConversation = messages.length > 0;
+  const loadingStatus = loadingCopy({
+    outgoing: loadingInput,
+    hasRecommendation: items.length > 0,
+    pendingRecommendationConfirmation,
+    readiness: readinessView,
+  });
+  const confirmedChips = useMemo(() => buildConfirmedChips(dossier, readinessView), [dossier, readinessView]);
+  const groupedItems = useMemo(
+    () => ({
       reach: items.filter((item) => item.bucket === "reach"),
       match: items.filter((item) => item.bucket === "match"),
-      safe: items.filter((item) => item.bucket === "safe")
-    };
-  }, [items]);
+      safe: items.filter((item) => item.bucket === "safe"),
+    }),
+    [items],
+  );
 
   return (
     <div className="assistant-shell">
       <section className="chat-surface panel">
         <div className="chat-surface-head">
           <div className="assistant-name">高考志愿助手</div>
-          <div className={`readiness-pill ${READINESS_CLASS[readinessView.level]}`}>{READINESS_TEXT[readinessView.level]}</div>
+          <div className={`readiness-pill ${readinessView.level === "ready_for_recommendation" ? "ready" : readinessView.level === "near_ready" ? "warming" : "pending"}`}>
+            {READINESS_TEXT[readinessView.level]}
+          </div>
         </div>
-        <h1 className="assistant-headline compact">{readinessHeadline(readinessView)}</h1>
-        <p className="assistant-subline compact">{reasoningSummary}</p>
+
+        {hasConversation ? (
+          <div className="conversation-status">
+            <div className="conversation-status-title">{readinessHeadline(readinessView, pendingRecommendationConfirmation)}</div>
+            <p className="assistant-subline compact">{reasoningSummary}</p>
+          </div>
+        ) : (
+          <>
+            <h1 className="assistant-headline compact">{readinessHeadline(readinessView, pendingRecommendationConfirmation)}</h1>
+            <p className="assistant-subline compact">{reasoningSummary}</p>
+          </>
+        )}
+
         <div className="top-chip-row">
-          {readinessView.missingLabels.slice(0, 4).map((label) => (
+          <span className="chip neutral">档案进度：{completenessSummary(dossier)}</span>
+          {readinessView.missingLabels.slice(0, 2).map((label) => (
             <span className="chip neutral" key={label}>
               待补充：{label}
             </span>
           ))}
-          {readinessView.conflicts.slice(0, 2).map((conflict) => (
+          {readinessView.conflicts.slice(0, 1).map((conflict) => (
             <span className="chip caution" key={conflict.code}>
               需要澄清
             </span>
           ))}
-          <span className="chip neutral">状态：{state}</span>
         </div>
         {error ? <p className="error-text">{error}</p> : null}
 
-          <div className="chat-list">
-            {messages.length === 0 ? (
-              <div className="message assistant">
-                <div className="message-role">{THREAD_LABELS.assistant}</div>
-                <div className="message-content">先别急着报志愿。你先说说孩子现在大概的情况、家庭约束和比较在意的方向，我会一步步追问。</div>
-              </div>
-            ) : null}
+        {items.length > 0 ? <RecommendationSummaryBar items={items} versions={recommendationVersions} /> : null}
 
-            {messages.map((message, index) => {
-              const isLastAssistant = message.role === "assistant" && index === messages.length - 1;
-              const shouldCollapseIntoCard =
-                isLastAssistant &&
-                (lastAction === "ask_followup" || lastAction === "confirm_constraints") &&
-                (!!lastNextQuestion || readinessView.conflicts.length > 0);
-              return (
-                <div className={`message ${message.role}`} key={`${message.role}-${index}-${message.content}`}>
-                  <div className="message-role">{THREAD_LABELS[message.role as "assistant" | "user"]}</div>
-                  {!shouldCollapseIntoCard ? <div className="message-content">{message.content}</div> : null}
+        <div className="chat-list">
+          {messages.length === 0 ? (
+            <div className="message assistant">
+              <div className="message-role">{THREAD_LABELS.assistant}</div>
+              <div className="message-content">先别急着报志愿。你直接像和顾问聊天一样，把你知道的情况告诉我，我会一步步帮你厘清。</div>
+            </div>
+          ) : null}
 
-                  {isLastAssistant && lastAction === "ask_followup" ? <FollowUpCard readiness={readinessView} nextQuestion={lastNextQuestion} /> : null}
-                  {isLastAssistant && lastAction === "confirm_constraints" && readinessView.conflicts.length > 0 ? <ConflictCard conflicts={readinessView.conflicts} /> : null}
-                  {isLastAssistant && items.length > 0 && lastAction === "explain_results" ? (
-                    <div className="inline-results">
-                      <div className="assistant-card-title">当前建议</div>
-                      <div className="inline-bucket-summary">
+          {messages.map((message, index) => {
+            const isLastAssistant = message.role === "assistant" && index === messages.length - 1;
+            const shouldCollapseIntoCard = isLastAssistant && lastAction === "ask_followup" && Boolean(lastNextQuestion);
+            return (
+              <div className={`message ${message.role}`} key={`${message.role}-${index}-${message.content}`}>
+                <div className="message-role">{THREAD_LABELS[message.role as "assistant" | "user"]}</div>
+                {!shouldCollapseIntoCard ? <div className="message-content">{message.content}</div> : null}
+                {isLastAssistant && lastAction === "ask_followup" ? <FollowUpCard readiness={readinessView} nextQuestion={lastNextQuestion} /> : null}
+                {isLastAssistant && items.length > 0 && (lastAction === "explain_results" || lastAction === "compare_options") ? (
+                  <div className="inline-results">
+                    <div className="assistant-card-title">{lastAction === "compare_options" ? "比较结果" : "当前建议"}</div>
+                    <div className="inline-bucket-summary">
                       {(["reach", "match", "safe"] as RecommendationBucket[]).map((bucket) => (
-                          <span className={`bucket-summary ${bucket}`} key={bucket}>
-                            {BUCKET_LABELS[bucket]} {groupedItems[bucket].length}
-                          </span>
-                        ))}
-                        <Link className="text-link" href="/compare">
-                          查看详细对比
-                        </Link>
-                      </div>
-                      {items.map((item) => (
-                        <ResultCard item={item} key={item.programId} />
+                        <span className={`bucket-summary ${bucket}`} key={bucket}>
+                          {BUCKET_LABELS[bucket]} {groupedItems[bucket].length}
+                        </span>
                       ))}
                     </div>
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
+                    {items.map((item) => (
+                      <ResultCard item={item} key={item.programId} />
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
 
-          <div className="composer">
-            <textarea
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              placeholder="例如：河南考生，家里条件一般，想稳一点，最好离家近些，比较倾向电气或计算机。"
-            />
-            <div className="composer-footer">
-              <button className="primary-button" type="button" onClick={() => void handleSend()} disabled={loading || !threadId}>
-                {loading ? "正在整理条件…" : "发送"}
-              </button>
-              <span className="composer-tip">不用一次性说完，想到什么补什么就行。</span>
+          {loading ? (
+            <div className="message assistant">
+              <div className="message-role">{THREAD_LABELS.assistant}</div>
+              <div className="assistant-card loading-card">
+                <div className="assistant-card-title">{loadingStatus.title}</div>
+                <p>{loadingStatus.body}</p>
+              </div>
             </div>
+          ) : null}
+        </div>
+
+        <div className="composer">
+          <textarea
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing) {
+                return;
+              }
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                void handleSendMessage(draft);
+              }
+            }}
+            placeholder="例如：河南考生，家里条件一般，想稳一点，最好离家近些，比较倾向电气或计算机。"
+          />
+          <div className="composer-footer">
+            <button className="primary-button" type="button" onClick={() => void handleSendMessage(draft)} disabled={loading || !threadId}>
+              {loading ? "处理中…" : "发送"}
+            </button>
+            <span className="composer-tip">每一轮普通追问会优先快速返回；正式推荐会先检索知识，再慢一点给你结构化结果。</span>
           </div>
+        </div>
       </section>
 
-      <section className="summary-strip panel">
-        <div className="summary-strip-head">
-          <div className="section-title">当前已确认信息</div>
-          <span className="section-desc">这是我现在已经确认下来的条件，后面你补充新信息时我会继续更新。</span>
-        </div>
-        <div className="summary-columns">
-          <div className="summary-grid">
-            <DossierItem label="省份" value={dossier?.province === "henan" ? "河南" : dossier?.province} />
-            <DossierItem label="年份" value={dossier?.targetYear} />
-            <DossierItem label="位次" value={dossier?.rank} />
-            <DossierItem label="分数" value={dossier?.score} />
-            <DossierItem label="风险偏好" value={dossier?.riskAppetite === "conservative" ? "偏稳" : dossier?.riskAppetite === "balanced" ? "平衡" : dossier?.riskAppetite === "aggressive" ? "偏冲" : null} />
-            <DossierItem label="预算" value={familyConstraints?.annualBudgetCny ? `${familyConstraints.annualBudgetCny} 元/年` : null} />
+      <section className="summary-strip panel compact">
+        <div className="summary-strip-head compact">
+          <div>
+            <div className="section-title">当前已确认信息</div>
+            <span className="section-desc">默认只保留摘要，不再占据大块首屏空间。</span>
           </div>
+          <span className="chip neutral">{completenessSummary(dossier)}</span>
+        </div>
+        <div className="chip-row">
+          {confirmedChips.length === 0 ? <span className="chip neutral">你继续聊天，我会在这里同步更新已确认条件。</span> : null}
+          {confirmedChips.map((chip) => (
+            <span className="chip neutral" key={chip}>
+              {chip}
+            </span>
+          ))}
+        </div>
 
-          <div className="summary-compact">
-            <div className="summary-section">
-            <label>选科组合</label>
-            <div className="chip-row">
-              {(dossier?.subjectCombination ?? []).length === 0 ? <span className="chip neutral">待补充</span> : null}
-              {(dossier?.subjectCombination ?? []).map((item) => (
-                <span className="chip neutral" key={item}>
-                  {item === "physics" ? "物理" : item === "chemistry" ? "化学" : item === "biology" ? "生物" : item === "history" ? "历史" : item}
-                </span>
-              ))}
-            </div>
-            </div>
-
-            <div className="summary-section">
-            <label>专业倾向</label>
-            <div className="chip-row">
-              {(dossier?.majorInterests ?? []).length === 0 ? <span className="chip neutral">待补充</span> : null}
-              {(dossier?.majorInterests ?? []).map((item) => (
-                <span className="chip neutral" key={item}>
-                  {item === "engineering" ? "工科 / 电气" : item === "computer_science" ? "计算机" : item === "education" ? "教育" : item}
-                </span>
-              ))}
-            </div>
-            </div>
-
-            <div className="summary-section">
-            <label>家庭约束</label>
-            <div className="chip-row">
-              <span className="chip neutral">{familyConstraints?.distancePreference === "near_home" ? "希望离家近" : familyConstraints?.distancePreference === "balanced" ? "距离平衡" : familyConstraints?.distancePreference === "nationwide" ? "全国都可" : "距离待确认"}</span>
-              <span className="chip neutral">
-                {familyConstraints?.adjustmentAccepted === true ? "接受调剂" : familyConstraints?.adjustmentAccepted === false ? "不接受调剂" : "调剂待确认"}
-              </span>
-              {(familyConstraints?.cityPreference ?? []).map((city) => (
-                <span className="chip neutral" key={city}>
-                  {city}
-                </span>
-              ))}
-            </div>
-            </div>
-
-            <div className="summary-section">
-            <label>还缺什么</label>
-            <div className="chip-row">
-              {readinessView.missingLabels.length === 0 ? <span className="chip positive">核心条件已齐</span> : null}
-              {readinessView.missingLabels.map((label) => (
-                <span className="chip caution" key={label}>
-                  {label}
-                </span>
-              ))}
-            </div>
-            </div>
-
-            <div className="summary-section">
-            <label>快速入口</label>
-            <div className="shortcut-links">
-              <Link href="/compare">查看方案对比</Link>
-              {items[0] ? <Link href={`/sources/${items[0].sourceIds[0]}`}>查看首条依据</Link> : null}
-              {comparePreview ? <span>{comparePreview.summary}</span> : <span>补全至少两条结果后，会自动出现对比预览。</span>}
-            </div>
-            </div>
+        <div className="summary-section">
+          <label>当前工作轨迹</label>
+          <div className="shortcut-links">
+            {taskTimeline.length === 0 ? <span>你一开口，我就会在这里显示当前正在做什么。</span> : null}
+            {taskTimeline.map((step) => (
+              <span key={`${step.step}-${step.label}`}>{step.label}</span>
+            ))}
           </div>
         </div>
       </section>

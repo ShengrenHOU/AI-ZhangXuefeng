@@ -44,9 +44,13 @@ textarea {
 }
 
 .assistant-shell {
-  width: min(1360px, calc(100% - 32px));
+  width: min(1400px, calc(100% - 28px));
   margin: 0 auto;
-  padding: 24px 0 40px;
+  padding: 18px 0 32px;
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.85fr);
+  gap: 18px;
+  align-items: start;
 }
 
 .shell {
@@ -66,13 +70,15 @@ textarea {
 .chat-surface,
 .summary-strip,
 .result-stage {
-  padding: 22px;
+  padding: 18px;
 }
 
 .chat-surface {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  min-height: calc(100vh - 72px);
+  max-height: calc(100vh - 72px);
 }
 
 .chat-surface-head {
@@ -98,7 +104,36 @@ textarea {
 
 .assistant-headline.compact {
   margin: 0;
-  font-size: clamp(1.8rem, 3vw, 2.8rem);
+  font-size: clamp(1.2rem, 2.1vw, 1.7rem);
+  line-height: 1.2;
+}
+
+.assistant-status-strip {
+  display: grid;
+  gap: 4px;
+  padding: 2px 0 4px;
+}
+
+.assistant-status-strip strong {
+  font-size: 1rem;
+  line-height: 1.35;
+}
+
+.assistant-status-strip span {
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.6;
+}
+
+.conversation-status {
+  display: grid;
+  gap: 4px;
+}
+
+.conversation-status-title {
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1.4;
 }
 
 .assistant-subline,
@@ -108,7 +143,7 @@ textarea {
 .message-content,
 .shortcut-links span {
   color: var(--muted);
-  line-height: 1.75;
+  line-height: 1.65;
 }
 
 .readiness-pill {
@@ -124,6 +159,71 @@ textarea {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  align-items: center;
+}
+
+.context-ribbon,
+.recommendation-ribbon {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.context-ribbon-label,
+.recommendation-ribbon-label {
+  font-size: 0.82rem;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.recommendation-ribbon strong {
+  line-height: 1.5;
+  font-size: 0.98rem;
+}
+
+.recommendation-overview {
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 20px;
+  background: linear-gradient(180deg, rgba(11, 87, 208, 0.06), rgba(11, 87, 208, 0.02));
+}
+
+.recommendation-overview-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.overview-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.overview-pill {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.overview-pill strong,
+.overview-pill span {
+  display: block;
+}
+
+.overview-pill span:last-child {
+  color: var(--muted);
+  font-size: 0.88rem;
+  margin-top: 3px;
 }
 
 .readiness-pill.pending {
@@ -304,8 +404,12 @@ textarea {
 .chat-list {
   display: flex;
   flex-direction: column;
+  flex: 1;
   gap: 14px;
-  margin: 20px 0;
+  margin: 14px 0;
+  min-height: 260px;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .message {
@@ -325,8 +429,8 @@ textarea {
 }
 
 .message-content {
-  max-width: 92%;
-  padding: 14px 16px;
+  max-width: min(82%, 860px);
+  padding: 13px 15px;
   border-radius: 18px;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.78);
@@ -340,7 +444,7 @@ textarea {
 
 .assistant-card {
   margin-top: 8px;
-  max-width: 92%;
+  max-width: min(82%, 860px);
   padding: 16px;
   border-radius: 18px;
   border: 1px solid var(--line);
@@ -364,7 +468,7 @@ textarea {
   display: grid;
   gap: 14px;
   margin-top: 10px;
-  max-width: 92%;
+  max-width: min(82%, 860px);
 }
 
 .inline-bucket-summary {
@@ -400,7 +504,7 @@ textarea {
 
 .recommendation-card {
   border-radius: 20px;
-  padding: 18px;
+  padding: 16px;
   border: 1px solid var(--line);
   background: var(--panel-strong);
 }
@@ -466,18 +570,23 @@ textarea {
 }
 
 .composer {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
   border-top: 1px solid var(--line);
   padding-top: 16px;
+  background: linear-gradient(180deg, rgba(244, 246, 251, 0), rgba(244, 246, 251, 0.92) 24%, rgba(244, 246, 251, 1) 100%);
 }
 
 .composer textarea {
   width: 100%;
-  min-height: 126px;
+  min-height: 88px;
+  max-height: 220px;
   resize: vertical;
   border-radius: 18px;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.85);
-  padding: 16px;
+  padding: 14px 16px;
   outline: none;
 }
 
@@ -514,16 +623,113 @@ textarea {
 }
 
 .summary-strip {
-  margin-top: 18px;
+  margin-top: 0;
+  padding: 14px 16px;
+  position: sticky;
+  top: 18px;
+  max-height: calc(100vh - 72px);
+  overflow-y: auto;
+}
+
+.loading-card {
+  background: rgba(11, 87, 208, 0.05);
 }
 
 .summary-strip-head {
   margin-bottom: 14px;
 }
 
+.summary-strip-head.compact {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.rail-empty {
+  padding: 16px;
+  border-radius: 18px;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.rail-recommendation-list {
+  display: grid;
+  gap: 12px;
+}
+
+.rail-recommendation-card {
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.rail-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.rail-card-city,
+.rail-card-program,
+.rail-card-summary,
+.status-note,
+.dossier-details summary {
+  color: var(--muted);
+}
+
+.rail-recommendation-card h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.rail-card-program {
+  margin: 6px 0 4px;
+  font-size: 0.92rem;
+}
+
+.rail-card-summary {
+  margin: 0 0 12px;
+  line-height: 1.6;
+}
+
+.status-note {
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(245, 165, 36, 0.1);
+  border: 1px solid rgba(245, 165, 36, 0.18);
+  font-size: 0.9rem;
+}
+
+.dossier-details {
+  margin-top: 16px;
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+
+.dossier-details summary {
+  cursor: pointer;
+  list-style: none;
+  font-weight: 700;
+}
+
+.dossier-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.dossier-details[open] summary {
+  margin-bottom: 14px;
+}
+
 .summary-columns {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 18px;
 }
 
@@ -539,7 +745,28 @@ textarea {
   color: var(--muted);
 }
 
+.message.pending .message-content {
+  border-style: dashed;
+  background: rgba(11, 87, 208, 0.05);
+}
+
 @media (max-width: 1100px) {
+  .assistant-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .chat-surface,
+  .summary-strip {
+    min-height: auto;
+    max-height: none;
+    position: static;
+  }
+
+  .chat-list {
+    overflow: visible;
+    padding-right: 0;
+  }
+
   .bucket-columns {
     grid-template-columns: 1fr;
   }
@@ -549,6 +776,10 @@ textarea {
   }
 
   .summary-columns {
+    grid-template-columns: 1fr;
+  }
+
+  .overview-row {
     grid-template-columns: 1fr;
   }
 }
@@ -561,7 +792,8 @@ textarea {
 
   .chat-surface-head,
   .section-header,
-  .composer-footer {
+  .composer-footer,
+  .summary-strip-head.compact {
     flex-direction: column;
     align-items: stretch;
   }
@@ -570,5 +802,9 @@ textarea {
   .assistant-card,
   .inline-results {
     max-width: 100%;
+  }
+
+  .composer {
+    position: static;
   }
 }

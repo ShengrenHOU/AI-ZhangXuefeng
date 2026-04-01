@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import json
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from knowledge_base import KnowledgeRepository
 from recommendation_core import RecommendationCore
 from recommendation_core.models import RecommendationRequest, StudentDossier
 
 from .config import settings
-from .db import Base, engine
+from .db import Base, engine, ensure_schema_compatibility
 from .llm import ArkCodingPlanClient
 from .repository import FeedbackRepository, SessionRepository
 from .schemas import (
@@ -24,6 +26,7 @@ from .schemas import (
 from .state_machine import SessionStateMachine
 
 Base.metadata.create_all(bind=engine)
+ensure_schema_compatibility()
 
 app = FastAPI(title="Gaokao Assistant API", version="0.1.0")
 app.add_middleware(
@@ -34,10 +37,9 @@ app.add_middleware(
 )
 
 knowledge_repo = KnowledgeRepository.from_root(settings.knowledge_path)
-recommendation_core = RecommendationCore()
 state_machine = SessionStateMachine(
     repository=knowledge_repo,
-    recommendation_core=recommendation_core,
+    recommendation_core=RecommendationCore(),
     planner_client=ArkCodingPlanClient(),
     province=settings.province,
     target_year=settings.target_year,
@@ -51,6 +53,8 @@ def healthcheck() -> dict:
     return {
         "status": "ok",
         "model": settings.ark_model,
+        "instant_model": settings.ark_instant_model or settings.ark_model,
+        "deepthink_model": settings.ark_deepthink_model or settings.ark_model,
         "live_llm_enabled": settings.enable_live_llm,
         "knowledge_root": str(settings.knowledge_path),
     }
@@ -59,12 +63,28 @@ def healthcheck() -> dict:
 @app.post("/api/session/start", response_model=SessionStartResponse)
 def start_session() -> SessionStartResponse:
     initial = state_machine.initialize()
-    session_repo.create(initial["thread_id"], initial["state"], initial["dossier"], initial["messages"])
+    session_repo.create(
+        initial["thread_id"],
+        initial["state"],
+        initial["dossier"],
+        initial["messages"],
+        pending_recommendation_confirmation=initial["pending_recommendation_confirmation"],
+        field_provenance=initial["field_provenance"],
+        recommendation=None,
+        recommendation_fingerprint=None,
+        recommendation_versions=[],
+        task_timeline=[],
+    )
     return SessionStartResponse(
         thread_id=initial["thread_id"],
         state=initial["state"],
         dossier=StudentDossier(**initial["dossier"]),
         readiness=initial["readiness"],
+        pending_recommendation_confirmation=initial["pending_recommendation_confirmation"],
+        field_provenance=initial["field_provenance"],
+        recommendation=None,
+        recommendation_versions=[],
+        task_timeline=[],
     )
 
 
@@ -74,9 +94,31 @@ def send_message(thread_id: str, payload: ChatMessageRequest) -> ChatMessageResp
     if existing is None:
         raise HTTPException(status_code=404, detail="thread not found")
 
-    state = {"thread_id": existing.thread_id, "state": existing.state, "dossier": existing.dossier, "messages": existing.messages}
+    state = {
+        "thread_id": existing.thread_id,
+        "state": existing.state,
+        "dossier": existing.dossier,
+        "messages": existing.messages,
+        "pending_recommendation_confirmation": existing.pending_recommendation_confirmation,
+        "field_provenance": existing.field_provenance,
+        "recommendation": existing.recommendation,
+        "recommendation_fingerprint": existing.recommendation_fingerprint,
+        "recommendation_versions": existing.recommendation_versions,
+        "task_timeline": existing.task_timeline,
+    }
     result = state_machine.handle_message(state, payload.content)
-    session_repo.update(thread_id, result["state"], result["dossier"], state["messages"])
+    session_repo.update(
+        thread_id,
+        result["state"],
+        result["dossier"],
+        state["messages"],
+        pending_recommendation_confirmation=result["pending_recommendation_confirmation"],
+        field_provenance=result["field_provenance"],
+        recommendation=result["recommendation"] if result["recommendation"] is not None else existing.recommendation,
+        recommendation_fingerprint=result["recommendation_fingerprint"],
+        recommendation_versions=result["recommendation_versions"],
+        task_timeline=result["task_timeline"],
+    )
 
     return ChatMessageResponse(
         thread_id=thread_id,
@@ -85,7 +127,11 @@ def send_message(thread_id: str, payload: ChatMessageRequest) -> ChatMessageResp
         dossier=StudentDossier(**result["dossier"]),
         model_action=result["model_action"],
         readiness=result["readiness"],
-        recommendation=result["recommendation"],
+        pending_recommendation_confirmation=result["pending_recommendation_confirmation"],
+        field_provenance=result["field_provenance"],
+        recommendation=result["recommendation"] if result["recommendation"] is not None else existing.recommendation,
+        recommendation_versions=result["recommendation_versions"],
+        task_timeline=result["task_timeline"],
     )
 
 
@@ -108,20 +154,88 @@ def get_session(thread_id: str) -> SessionSnapshotResponse:
         dossier=StudentDossier(**existing.dossier),
         messages=existing.messages,
         readiness=state_machine.evaluate_dossier(StudentDossier(**existing.dossier)),
+        pending_recommendation_confirmation=existing.pending_recommendation_confirmation,
+        field_provenance=existing.field_provenance,
+        recommendation=existing.recommendation,
+        recommendation_versions=existing.recommendation_versions,
+        task_timeline=existing.task_timeline,
     )
+
+
+@app.post("/api/session/{thread_id}/stream")
+def stream_message(thread_id: str, payload: ChatMessageRequest) -> StreamingResponse:
+    existing = session_repo.get(thread_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="thread not found")
+
+    state = {
+        "thread_id": existing.thread_id,
+        "state": existing.state,
+        "dossier": existing.dossier,
+        "messages": existing.messages,
+        "pending_recommendation_confirmation": existing.pending_recommendation_confirmation,
+        "field_provenance": existing.field_provenance,
+        "recommendation": existing.recommendation,
+        "recommendation_fingerprint": existing.recommendation_fingerprint,
+        "recommendation_versions": existing.recommendation_versions,
+        "task_timeline": existing.task_timeline,
+    }
+
+    result = state_machine.handle_message(state, payload.content)
+    persisted_recommendation = result["recommendation"] if result["recommendation"] is not None else existing.recommendation
+
+    session_repo.update(
+        thread_id,
+        result["state"],
+        result["dossier"],
+        state["messages"],
+        pending_recommendation_confirmation=result["pending_recommendation_confirmation"],
+        field_provenance=result["field_provenance"],
+        recommendation=persisted_recommendation,
+        recommendation_fingerprint=result["recommendation_fingerprint"],
+        recommendation_versions=result["recommendation_versions"],
+        task_timeline=result["task_timeline"],
+    )
+
+    def event_stream():
+        yield _sse_event("status", {"message": "正在理解你的意图"})
+        for step in result["task_timeline"]:
+            yield _sse_event("task_step", step)
+        if result["model_action"]["action"] == "directional_guidance":
+            yield _sse_event(
+                "directional_guidance",
+                {
+                    "assistant_message": result["assistant_message"],
+                    "readiness": result["readiness"],
+                },
+            )
+        if persisted_recommendation:
+            for item in persisted_recommendation["items"]:
+                yield _sse_event("recommendation_delta", item)
+        yield _sse_event(
+            "final_message",
+            {
+                "thread_id": thread_id,
+                "state": result["state"],
+                "assistant_message": result["assistant_message"],
+                "dossier": result["dossier"],
+                "readiness": result["readiness"],
+                "pending_recommendation_confirmation": result["pending_recommendation_confirmation"],
+                "field_provenance": result["field_provenance"],
+                "recommendation": persisted_recommendation,
+                "recommendation_versions": result["recommendation_versions"],
+                "task_timeline": result["task_timeline"],
+                "model_action": result["model_action"],
+            },
+        )
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @app.post("/api/recommendation/run")
 def run_recommendation(request: RecommendationRequest) -> dict:
-    manifest = knowledge_repo.load_manifest(province=settings.province, year=settings.target_year)
-    run = recommendation_core.run(
-        request=request,
-        programs=knowledge_repo.load_programs(province=settings.province, year=settings.target_year),
-        schools=knowledge_repo.load_schools(province=settings.province, year=settings.target_year),
-        knowledge_version=manifest["version"],
-        model_version=settings.ark_model if settings.ark_api_key else "mock-structured-output",
-    )
-    return run.model_dump()
+    run, _ = state_machine.build_recommendation_run(request.thread_id or "adhoc-run", request.dossier)
+    return run
 
 
 @app.post("/api/recommendation/compare", response_model=CompareResponse)
@@ -154,16 +268,16 @@ def export_family_summary(request: RecommendationRequest) -> ExportSummaryRespon
     items = run["items"]
     source_ids = sorted({source_id for item in items for source_id in item["source_ids"]})
     lines = [
-        "Family Summary",
+        "家庭沟通摘要",
         "",
-        f"Province: {request.dossier.province or settings.province}",
-        f"Year: {request.dossier.target_year or settings.target_year}",
+        f"省份：{request.dossier.province or settings.province}",
+        f"年份：{request.dossier.target_year or settings.target_year}",
         "",
     ]
     for item in items[:3]:
-        lines.append(f"- {item['program_id']} ({item['bucket']}): {item['parent_summary']}")
+        lines.append(f"- {item['school_name']} / {item['program_name']}（{item['bucket']}）：{item['parent_summary']}")
     return ExportSummaryResponse(
-        title="Gaokao Family Summary",
+        title="高考志愿家庭摘要",
         body="\n".join(lines),
         source_ids=source_ids,
         trace_id=run["trace_id"],
@@ -174,3 +288,7 @@ def export_family_summary(request: RecommendationRequest) -> ExportSummaryRespon
 def create_feedback(payload: FeedbackRequest) -> dict:
     feedback = feedback_repo.create(thread_id=payload.thread_id, rating=payload.rating, comment=payload.comment)
     return {"id": feedback.id, "thread_id": feedback.thread_id, "rating": feedback.rating}
+
+
+def _sse_event(event: str, payload: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
