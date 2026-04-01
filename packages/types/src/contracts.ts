@@ -10,6 +10,13 @@ export type RecommendationBucket = "reach" | "match" | "safe";
 export type KnowledgePublicationStatus = "draft" | "reviewed" | "published";
 export type SourceKind = "official_fact" | "governed_explainer" | "generated_artifact";
 export type ReadinessLevel = "insufficient_info" | "near_ready" | "ready_for_recommendation";
+export type ProvenanceSource =
+  | "deterministic_regex"
+  | "deterministic_alias_match"
+  | "deterministic_keyword_match"
+  | "llm_patch"
+  | "user_confirmed";
+export type FieldProvenance = Record<string, ProvenanceSource>;
 
 export interface ConflictNotice {
   code: string;

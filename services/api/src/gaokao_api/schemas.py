@@ -24,6 +24,8 @@ class SessionStartResponse(BaseModel):
     state: str
     dossier: StudentDossier
     readiness: ReadinessResponse
+    pending_recommendation_confirmation: bool
+    field_provenance: dict[str, str]
 
 
 class SessionSnapshotResponse(BaseModel):
@@ -32,6 +34,8 @@ class SessionSnapshotResponse(BaseModel):
     dossier: StudentDossier
     messages: list[dict]
     readiness: ReadinessResponse
+    pending_recommendation_confirmation: bool
+    field_provenance: dict[str, str]
 
 
 class ChatMessageRequest(BaseModel):
@@ -45,6 +49,8 @@ class ChatMessageResponse(BaseModel):
     dossier: StudentDossier
     model_action: dict
     readiness: ReadinessResponse
+    pending_recommendation_confirmation: bool
+    field_provenance: dict[str, str]
     recommendation: RecommendationRun | None = None
 
 

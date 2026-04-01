@@ -59,12 +59,21 @@ def healthcheck() -> dict:
 @app.post("/api/session/start", response_model=SessionStartResponse)
 def start_session() -> SessionStartResponse:
     initial = state_machine.initialize()
-    session_repo.create(initial["thread_id"], initial["state"], initial["dossier"], initial["messages"])
+    session_repo.create(
+        initial["thread_id"],
+        initial["state"],
+        initial["dossier"],
+        initial["messages"],
+        pending_recommendation_confirmation=initial["pending_recommendation_confirmation"],
+        field_provenance=initial["field_provenance"],
+    )
     return SessionStartResponse(
         thread_id=initial["thread_id"],
         state=initial["state"],
         dossier=StudentDossier(**initial["dossier"]),
         readiness=initial["readiness"],
+        pending_recommendation_confirmation=initial["pending_recommendation_confirmation"],
+        field_provenance=initial["field_provenance"],
     )
 
 
@@ -74,9 +83,23 @@ def send_message(thread_id: str, payload: ChatMessageRequest) -> ChatMessageResp
     if existing is None:
         raise HTTPException(status_code=404, detail="thread not found")
 
-    state = {"thread_id": existing.thread_id, "state": existing.state, "dossier": existing.dossier, "messages": existing.messages}
+    state = {
+        "thread_id": existing.thread_id,
+        "state": existing.state,
+        "dossier": existing.dossier,
+        "messages": existing.messages,
+        "pending_recommendation_confirmation": existing.pending_recommendation_confirmation,
+        "field_provenance": existing.field_provenance,
+    }
     result = state_machine.handle_message(state, payload.content)
-    session_repo.update(thread_id, result["state"], result["dossier"], state["messages"])
+    session_repo.update(
+        thread_id,
+        result["state"],
+        result["dossier"],
+        state["messages"],
+        pending_recommendation_confirmation=result["pending_recommendation_confirmation"],
+        field_provenance=result["field_provenance"],
+    )
 
     return ChatMessageResponse(
         thread_id=thread_id,
@@ -85,6 +108,8 @@ def send_message(thread_id: str, payload: ChatMessageRequest) -> ChatMessageResp
         dossier=StudentDossier(**result["dossier"]),
         model_action=result["model_action"],
         readiness=result["readiness"],
+        pending_recommendation_confirmation=result["pending_recommendation_confirmation"],
+        field_provenance=result["field_provenance"],
         recommendation=result["recommendation"],
     )
 
@@ -108,6 +133,8 @@ def get_session(thread_id: str) -> SessionSnapshotResponse:
         dossier=StudentDossier(**existing.dossier),
         messages=existing.messages,
         readiness=state_machine.evaluate_dossier(StudentDossier(**existing.dossier)),
+        pending_recommendation_confirmation=existing.pending_recommendation_confirmation,
+        field_provenance=existing.field_provenance,
     )
 
 

@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
+
+db_path = Path("./services/api/test_gaokao_mvp.db")
+if db_path.exists():
+    db_path.unlink()
 
 os.environ["DATABASE_URL"] = "sqlite:///./services/api/test_gaokao_mvp.db"
 os.environ["ENABLE_LIVE_LLM"] = "false"
@@ -19,6 +24,8 @@ def test_session_flow_and_dossier_endpoint() -> None:
     start_payload = start.json()
     thread_id = start_payload["thread_id"]
     assert start_payload["readiness"]["level"] == "insufficient_info"
+    assert start_payload["pending_recommendation_confirmation"] is False
+    assert start_payload["field_provenance"] == {}
 
     message = client.post(
         f"/api/session/{thread_id}/message",
@@ -27,8 +34,19 @@ def test_session_flow_and_dossier_endpoint() -> None:
     assert message.status_code == 200
     payload = message.json()
     assert payload["thread_id"] == thread_id
-    assert payload["recommendation"] is not None
+    assert payload["recommendation"] is None
     assert payload["readiness"]["can_recommend"] is True
+    assert payload["pending_recommendation_confirmation"] is True
+    assert payload["field_provenance"]
+
+    confirm = client.post(
+        f"/api/session/{thread_id}/message",
+        json={"content": "可以，就按这些条件开始推荐。"},
+    )
+    assert confirm.status_code == 200
+    confirm_payload = confirm.json()
+    assert confirm_payload["recommendation"] is not None
+    assert confirm_payload["pending_recommendation_confirmation"] is False
 
     dossier = client.get(f"/api/session/{thread_id}/dossier")
     assert dossier.status_code == 200
@@ -37,8 +55,9 @@ def test_session_flow_and_dossier_endpoint() -> None:
     snapshot = client.get(f"/api/session/{thread_id}")
     assert snapshot.status_code == 200
     assert snapshot.json()["thread_id"] == thread_id
-    assert len(snapshot.json()["messages"]) >= 2
+    assert len(snapshot.json()["messages"]) >= 4
     assert snapshot.json()["readiness"]["level"] == "ready_for_recommendation"
+    assert snapshot.json()["field_provenance"]
 
 
 def test_healthcheck() -> None:
@@ -65,4 +84,3 @@ def test_conflict_message_does_not_recommend() -> None:
     assert payload["state"] == "constraint_confirmation"
     assert payload["recommendation"] is None
     assert payload["readiness"]["conflicts"]
-

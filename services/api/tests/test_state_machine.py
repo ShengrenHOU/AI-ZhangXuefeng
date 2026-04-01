@@ -32,10 +32,26 @@ def test_state_machine_returns_recommendation_when_dossier_is_complete() -> None
         state,
         "河南，位次: 70000，physics chemistry biology，预算: 6000，想学电气，稳一点，不接受调剂，离家近。",
     )
-    assert result["state"] == "result_explanation"
+    assert result["state"] == "constraint_confirmation"
     assert result["readiness"]["level"] == "ready_for_recommendation"
-    assert result["recommendation"] is not None
-    assert result["recommendation"]["items"]
+    assert result["pending_recommendation_confirmation"] is True
+    assert result["recommendation"] is None
+
+
+def test_state_machine_recommends_only_after_affirmation() -> None:
+    machine = make_machine()
+    state = machine.initialize()
+    first = machine.handle_message(
+        state,
+        "河南，位次: 70000，physics chemistry biology，预算: 6000，想学电气，稳一点，不接受调剂，离家近。",
+    )
+    assert state["pending_recommendation_confirmation"] is True
+    second = machine.handle_message(state, "可以，就按这些条件开始推荐。")
+    assert second["state"] == "result_explanation"
+    assert second["pending_recommendation_confirmation"] is False
+    assert second["recommendation"] is not None
+    assert second["recommendation"]["items"]
+    assert second["field_provenance"]
 
 
 def test_state_machine_blocks_recommendation_when_constraints_conflict() -> None:
@@ -73,3 +89,17 @@ def test_state_machine_answers_subject_combo_question_before_recommending() -> N
     assert result["recommendation"] is None
     assert "物化生" in result["assistant_message"]
     assert "理科生" in result["assistant_message"]
+
+
+def test_state_machine_preserves_confirmation_but_allows_negative_reply() -> None:
+    machine = make_machine()
+    state = machine.initialize()
+    first = machine.handle_message(
+        state,
+        "河南，位次: 65000，选科是物化生，预算: 6500，想学计算机，接受调剂。",
+    )
+    assert state["pending_recommendation_confirmation"] is True
+    second = machine.handle_message(state, "我还想改一下条件，先别正式推荐。")
+    assert second["state"] == "follow_up_questioning"
+    assert second["pending_recommendation_confirmation"] is False
+    assert second["recommendation"] is None

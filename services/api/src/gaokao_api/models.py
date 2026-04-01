@@ -15,6 +15,8 @@ class SessionStateModel(Base):
     state: Mapped[str] = mapped_column(String(32), default="entry_intent")
     dossier: Mapped[dict] = mapped_column(JSON, default=dict)
     messages: Mapped[list] = mapped_column(JSON, default=list)
+    pending_recommendation_confirmation: Mapped[bool] = mapped_column(default=False)
+    field_provenance: Mapped[dict] = mapped_column(JSON, default=dict)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
 
 
@@ -26,4 +28,3 @@ class FeedbackModel(Base):
     rating: Mapped[str] = mapped_column(String(16))
     comment: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
-

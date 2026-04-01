@@ -84,8 +84,8 @@ class ArkCodingPlanClient:
             model=self.model,
             messages=messages,
             max_completion_tokens=700,
-            temperature=0.3,
-            top_p=0.95,
+            temperature=0.2,
+            top_p=0.9,
             stream=False,
             response_format={"type": "json_object"},
         )
@@ -102,10 +102,13 @@ class ArkCodingPlanClient:
             "你必须只返回一个 JSON 对象。"
             "键名必须严格使用 snake_case：action, dossier_patch, next_question, reasoning_summary, source_ids。"
             "你不能直接给出学校或专业推荐。"
+            "你不能承诺录取，也不能制造确定性结论。"
             "你只能从用户最新一句话中抽取明确支持的 dossier 字段，不要猜。"
+            "推荐门槛至少需要：省份、年份、位次或分数、选科组合、专业兴趣、预算、一个家庭决策锚点。"
+            "家庭决策锚点可以是：更看重离家近、是否接受调剂、城市偏好、或者风险偏好。"
             "如果还有缺失字段，优先使用 action=ask_followup。"
             "如果存在冲突约束，优先使用 action=confirm_constraints。"
-            "只有缺失字段为空且冲突为空时，才使用 action=explain_results。"
+            "只有缺失字段为空且冲突为空时，才允许 action=explain_results。"
             "next_question 必须是中文、简短、像成熟 AI 助手的追问，不要工程味。"
             "reasoning_summary 必须是中文，面向家长可读。"
             "合法 dossier_patch 字段包括 province, target_year, rank, score, subject_combination, major_interests, risk_appetite, family_constraints, summary_notes。"

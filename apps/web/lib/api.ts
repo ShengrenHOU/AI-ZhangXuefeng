@@ -1,4 +1,5 @@
 import type { ConflictNotice, ReadinessLevel, RecommendationBucket, RecommendationItem } from "@gaokao-mvp/types";
+import type { FieldProvenance } from "@gaokao-mvp/types";
 
 export type ApiFamilyConstraints = {
   annual_budget_cny?: number | null;
@@ -60,6 +61,8 @@ export type SessionSnapshot = {
   dossier: UiDossier;
   messages: { role: string; content: string }[];
   readiness: UiReadiness;
+  pendingRecommendationConfirmation: boolean;
+  fieldProvenance: FieldProvenance;
 };
 
 export type ChatResult = {
@@ -68,6 +71,8 @@ export type ChatResult = {
   assistantMessage: string;
   dossier: UiDossier;
   readiness: UiReadiness;
+  pendingRecommendationConfirmation: boolean;
+  fieldProvenance: FieldProvenance;
   recommendation: UiRecommendationRun | null;
   modelAction: {
     action: string;
@@ -199,7 +204,9 @@ export async function startSession(): Promise<SessionSnapshot> {
     state: payload.state,
     dossier: mapDossier(payload.dossier),
     messages: [],
-    readiness: mapReadiness(payload.readiness)
+    readiness: mapReadiness(payload.readiness),
+    pendingRecommendationConfirmation: payload.pending_recommendation_confirmation,
+    fieldProvenance: payload.field_provenance ?? {}
   };
 }
 
@@ -210,7 +217,9 @@ export async function getSession(threadId: string): Promise<SessionSnapshot> {
     state: payload.state,
     dossier: mapDossier(payload.dossier),
     messages: payload.messages ?? [],
-    readiness: mapReadiness(payload.readiness)
+    readiness: mapReadiness(payload.readiness),
+    pendingRecommendationConfirmation: payload.pending_recommendation_confirmation,
+    fieldProvenance: payload.field_provenance ?? {}
   };
 }
 
@@ -225,6 +234,8 @@ export async function sendMessage(threadId: string, content: string): Promise<Ch
     assistantMessage: payload.assistant_message,
     dossier: mapDossier(payload.dossier),
     readiness: mapReadiness(payload.readiness),
+    pendingRecommendationConfirmation: payload.pending_recommendation_confirmation,
+    fieldProvenance: payload.field_provenance ?? {},
     recommendation: payload.recommendation ? mapRecommendation(payload.recommendation) : null,
     modelAction: {
       action: payload.model_action.action,
