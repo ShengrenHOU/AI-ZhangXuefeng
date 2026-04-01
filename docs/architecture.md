@@ -4,33 +4,49 @@
 
 The repository uses two runtime lanes:
 
-- online lane: chat-driven recommendation workflow
+- online lane: AI-first chat recommendation workflow
 - offline lane: knowledge ingestion, normalization, review, and publication
 
-Only the online lane is implemented in phase 1.
+Only the online lane is part of the current product runtime.
 
 ## Online Request Flow
 
-1. user sends a message
-2. session state machine extracts a dossier patch
-3. missing fields are checked
-4. the assistant either asks a follow-up question or triggers recommendation generation
-5. the recommendation core filters, scores, and buckets candidates
-6. published knowledge records are attached as evidence
-7. the API returns structured cards plus an assistant-facing summary
+1. the user sends a message
+2. the online workflow updates session memory and dossier state
+3. the model interprets intent through runtime promptpacks
+4. the system gathers published knowledge and optional open-web context
+5. the model returns either:
+   - a follow-up
+   - directional guidance
+   - a recommendation
+   - a comparison
+   - a refinement
+6. the API stores recommendation versions and task timeline
+7. the frontend renders chat, task trace, and current suggestion state
 
 ## Module Boundaries
 
-- `apps/web`: UI shell, chat panel, dossier panel, shortlist, compare, source views
-- `services/api`: session storage, API routes, state transitions, export assembly
-- `packages/recommendation-core`: deterministic scoring logic
-- `packages/knowledge`: source data and published knowledge reads
-- `packages/types`: JSON schemas and frontend contracts
+- `apps/web`: chat UI, current shortlist rail, task timeline, stream rendering
+- `services/api`: session flow, runtime promptpacks, retrieval orchestration, stream APIs, persistence
+- `packages/recommendation-core`: fallback, guardrail, and hint layer
+- `packages/knowledge`: published and draft knowledge reads plus source records
+- `packages/types`: contracts shared by backend and frontend
+
+## Runtime Prompt Layer
+
+The runtime prompt assets live under:
+
+- `services/api/src/gaokao_api/promptpacks/`
+
+This layer is distinct from repo skills:
+
+- `skills/` define durable repo principles
+- `promptpacks/` define runtime model instructions consumed by code
 
 ## Design Constraints
 
-- online recommendation never reads draft knowledge
-- explanation cannot override rule decisions
-- recommendation traces must include rule and knowledge versions
-- source metadata is first-class UI data, not debug-only data
-
+- online recommendation never depends on draft knowledge
+- external retrieval must degrade safely
+- recommendation text must remain family-readable
+- recommendation items keep internal source trace even when the UI hides links
+- workflow should enhance the model, not replace it as the main recommender

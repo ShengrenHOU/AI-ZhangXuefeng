@@ -163,6 +163,12 @@ class SessionStateMachine:
 
         deterministic_patch, deterministic_provenance = self._extract_patch(content)
         draft_dossier = self._merge_dossier(dossier, deterministic_patch)
+        live_dossier_patch = self._dossier_patch_with_live_model(
+            dossier=draft_dossier,
+            user_message=content,
+            task_timeline=task_timeline,
+        )
+        draft_dossier = self._merge_dossier(draft_dossier, live_dossier_patch)
         draft_readiness = self.evaluate_dossier(draft_dossier)
 
         planner_action = self._plan_with_live_model(
@@ -173,7 +179,7 @@ class SessionStateMachine:
             readiness_level=draft_readiness["level"],
         )
 
-        live_patch = self._patch_from_action(planner_action)
+        live_patch = self._merge_patch_objects(live_dossier_patch, self._patch_from_action(planner_action))
         live_provenance = self._provenance_from_patch(
             live_patch.model_dump(exclude_none=True, exclude_defaults=True),
             source="llm_patch",
@@ -269,6 +275,13 @@ class SessionStateMachine:
             next_question = self._next_question(dossier, readiness, planner_action)
             assistant_message = self._build_assistant_message(action, readiness, planner_action, next_question)
 
+        assistant_message = self._guard_user_facing_text(
+            assistant_message,
+            action=action,
+            dossier=dossier,
+            readiness=readiness,
+        )
+
         state["dossier"] = dossier.model_dump()
         state["state"] = state_name
         state["messages"] = state["messages"] + [
@@ -358,6 +371,25 @@ class SessionStateMachine:
             conflicts=conflicts,
             readiness_level=readiness_level,
         )
+
+    def _dossier_patch_with_live_model(
+        self,
+        *,
+        dossier: StudentDossier,
+        user_message: str,
+        task_timeline: list[dict[str, Any]],
+    ) -> StudentDossier:
+        if self.planner_client is None or not self.planner_client.is_configured():
+            return StudentDossier()
+        patch = self.planner_client.update_dossier_patch(
+            dossier=dossier.model_dump(),
+            user_message=user_message,
+            task_timeline=task_timeline,
+        )
+        try:
+            return StudentDossier(**patch)
+        except Exception:
+            return StudentDossier()
 
     def build_recommendation_run(self, thread_id: str, dossier: StudentDossier, user_message: str = "") -> tuple[dict[str, Any], str]:
         run, summary, _ = self._run_recommendation(thread_id, dossier, user_message)
@@ -849,6 +881,16 @@ class SessionStateMachine:
 
     def _build_directional_guidance(self, dossier: StudentDossier, readiness: dict[str, Any], user_message: str) -> tuple[str, dict[str, Any]]:
         knowledge_slice = self._retrieve_knowledge_slice(dossier, user_message)
+        if self.planner_client is not None and self.planner_client.is_configured():
+            live_guidance = self.planner_client.generate_directional_guidance(
+                dossier=dossier.model_dump(),
+                missing_fields=readiness["missing_fields"],
+                conflicts=readiness["conflicts"],
+                user_message=user_message,
+                retrieved_context=knowledge_slice,
+            )
+            if live_guidance:
+                return live_guidance, knowledge_slice
         candidate_names = [
             f"{candidate['school_name']} / {candidate['program_name']}"
             for candidate in knowledge_slice.get("candidates", [])[:2]
@@ -865,6 +907,25 @@ class SessionStateMachine:
         if knowledge_slice.get("web_results"):
             guidance += " 我还会顺手参考一部分最新公开信息，避免只盯着本地已发布知识。"
         return guidance, knowledge_slice
+
+    def _guard_user_facing_text(
+        self,
+        message: str,
+        *,
+        action: str,
+        dossier: StudentDossier,
+        readiness: dict[str, Any],
+    ) -> str:
+        if self.planner_client is None or not self.planner_client.is_configured():
+            return message
+        return self.planner_client.guard_user_facing_text(
+            draft_output=message,
+            model_action=action,
+            user_context={
+                "dossier": dossier.model_dump(),
+                "readiness": readiness,
+            },
+        )
 
     def _append_recommendation_version(self, versions: list[dict[str, Any]], recommendation: dict[str, Any], label: str) -> list[dict[str, Any]]:
         new_version = {

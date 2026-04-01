@@ -367,7 +367,7 @@ export function ChatShell() {
           setStreamedItems((current) => [...current, item]);
           return;
         }
-        if (event.event === "assistant_delta") {
+        if (event.event === "assistant_delta" || event.event === "compare_delta") {
           setStreamingAssistantText((current) => current + event.data.delta);
           return;
         }

@@ -122,6 +122,7 @@ export type CompareResult = {
 export type StreamEvent =
   | { event: "status"; data: { message: string } }
   | { event: "assistant_delta"; data: { delta: string } }
+  | { event: "compare_delta"; data: { delta: string } }
   | { event: "task_step"; data: UiTaskStep }
   | { event: "directional_guidance"; data: { assistantMessage: string; readiness: UiReadiness } }
   | { event: "recommendation_delta"; data: RecommendationItem }
@@ -356,6 +357,10 @@ export async function sendStreamMessage(
         continue;
       }
       if (event === "assistant_delta") {
+        onEvent({ event, data: { delta: raw.delta ?? "" } });
+        continue;
+      }
+      if (event === "compare_delta") {
         onEvent({ event, data: { delta: raw.delta ?? "" } });
         continue;
       }

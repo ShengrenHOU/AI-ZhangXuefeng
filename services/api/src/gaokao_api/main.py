@@ -223,7 +223,7 @@ def stream_message(thread_id: str, payload: ChatMessageRequest) -> StreamingResp
                 yield _sse_event("assistant_delta", {"delta": chunk})
         elif result["model_action"]["action"] == "compare_options":
             for chunk in _chunk_text(result["assistant_message"]):
-                yield _sse_event("assistant_delta", {"delta": chunk})
+                yield _sse_event("compare_delta", {"delta": chunk})
         if persisted_recommendation:
             for item in persisted_recommendation["items"]:
                 yield _sse_event("recommendation_delta", item)

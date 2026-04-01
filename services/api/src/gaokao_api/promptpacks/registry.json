@@ -1,0 +1,58 @@
+{
+  "intent_router": {
+    "path": "intent_router.md",
+    "purpose": "Classify the user's current turn into a high-level AI-first action.",
+    "model_route": "instant",
+    "expected_inputs": ["dossier", "missing_fields", "conflicts", "readiness_level", "user_message"],
+    "expected_outputs": ["action", "dossier_patch", "next_question", "reasoning_summary", "source_ids"]
+  },
+  "dossier_updater": {
+    "path": "dossier_updater.md",
+    "purpose": "Translate user language into supported dossier updates without guessing.",
+    "model_route": "instant",
+    "expected_inputs": ["dossier", "user_message", "task_timeline"],
+    "expected_outputs": ["dossier_patch"]
+  },
+  "directional_guidance": {
+    "path": "directional_guidance.md",
+    "purpose": "Give incomplete-information directional guidance before full recommendation.",
+    "model_route": "instant",
+    "expected_inputs": ["dossier", "missing_fields", "conflicts", "user_message", "retrieved_context"],
+    "expected_outputs": ["guidance_text"]
+  },
+  "retrieval_planner": {
+    "path": "retrieval_planner.md",
+    "purpose": "Plan lightweight knowledge and web queries for the current turn.",
+    "model_route": "instant",
+    "expected_inputs": ["dossier", "user_message", "task_plan"],
+    "expected_outputs": ["queries"]
+  },
+  "recommendation_generator": {
+    "path": "recommendation_generator.md",
+    "purpose": "Generate structured shortlist recommendations from dossier and retrieved context.",
+    "model_route": "deepthink",
+    "expected_inputs": ["dossier", "retrieved_knowledge"],
+    "expected_outputs": ["reasoning_summary", "items"]
+  },
+  "compare_generator": {
+    "path": "compare_generator.md",
+    "purpose": "Compare two candidate options in family-readable language.",
+    "model_route": "instant",
+    "expected_inputs": ["dossier", "left_option", "right_option"],
+    "expected_outputs": ["reasoning_summary", "summary"]
+  },
+  "family_summary_writer": {
+    "path": "family_summary_writer.md",
+    "purpose": "Produce a family-facing summary from the current recommendation set.",
+    "model_route": "deepthink",
+    "expected_inputs": ["dossier", "recommendation"],
+    "expected_outputs": ["summary_text"]
+  },
+  "safety_style_guard": {
+    "path": "safety_style_guard.md",
+    "purpose": "Keep language safe, non-guaranteeing, and respectful for Chinese families.",
+    "model_route": "instant",
+    "expected_inputs": ["draft_output", "model_action", "user_context"],
+    "expected_outputs": ["approved", "revision_notes"]
+  }
+}
