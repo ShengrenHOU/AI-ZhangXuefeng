@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
 from .config import settings
@@ -17,20 +18,30 @@ def ensure_schema_compatibility() -> None:
     if "session_states" not in inspector.get_table_names():
         return
 
-    columns = {column["name"] for column in inspector.get_columns("session_states")}
-    statements: list[str] = []
-
-    if "pending_recommendation_confirmation" not in columns:
-        statements.append("ALTER TABLE session_states ADD COLUMN pending_recommendation_confirmation BOOLEAN DEFAULT 0")
-    if "field_provenance" not in columns:
-        statements.append("ALTER TABLE session_states ADD COLUMN field_provenance JSON DEFAULT '{}'")
-
-    if not statements:
-        return
-
     with engine.begin() as connection:
-        for statement in statements:
-            connection.execute(text(statement))
+        _add_column_if_missing(
+            connection,
+            table_name="session_states",
+            column_name="pending_recommendation_confirmation",
+            statement="ALTER TABLE session_states ADD COLUMN pending_recommendation_confirmation BOOLEAN DEFAULT 0",
+        )
+        _add_column_if_missing(
+            connection,
+            table_name="session_states",
+            column_name="field_provenance",
+            statement="ALTER TABLE session_states ADD COLUMN field_provenance JSON DEFAULT '{}'",
+        )
+
+
+def _add_column_if_missing(connection, *, table_name: str, column_name: str, statement: str) -> None:
+    current_columns = {column["name"] for column in inspect(connection).get_columns(table_name)}
+    if column_name in current_columns:
+        return
+    try:
+        connection.execute(text(statement))
+    except OperationalError as exc:
+        if "duplicate column name" not in str(exc).lower():
+            raise
 
 
 @contextmanager

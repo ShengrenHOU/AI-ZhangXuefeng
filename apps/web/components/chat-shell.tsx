@@ -1,11 +1,10 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import type { ReadinessLevel, RecommendationBucket, RecommendationItem } from "@gaokao-mvp/types";
 
-import { comparePrograms, getSession, sendMessage, startSession, type ChatResult, type SessionSnapshot, type UiDossier, type UiReadiness, type UiRecommendationRun } from "../lib/api";
+import { getSession, sendMessage, startSession, type ChatResult, type SessionSnapshot, type UiDossier, type UiReadiness, type UiRecommendationRun } from "../lib/api";
 
 const THREAD_STORAGE_KEY = "gaokao-mvp-thread-id";
 const INITIAL_DRAFT = "我是河南考生，家里条件一般，想稳一点，最好离家近些，比较倾向电气或计算机。";
@@ -36,11 +35,6 @@ const THREAD_LABELS = {
   user: "你",
 };
 
-type ComparePreview = {
-  summary: string;
-  sourceIds: string[];
-} | null;
-
 function subjectLabel(value: string) {
   const mapping: Record<string, string> = {
     physics: "物理",
@@ -60,6 +54,24 @@ function interestLabel(value: string) {
     education: "教育 / 师范",
     finance: "金融 / 经管",
     medicine: "医学 / 临床 / 护理",
+  };
+  return mapping[value] ?? value;
+}
+
+function cityLabel(value: string) {
+  const mapping: Record<string, string> = {
+    Zhengzhou: "郑州",
+    Xinyang: "信阳",
+    Xinxiang: "新乡",
+    Beijing: "北京",
+    Shanghai: "上海",
+    Guangzhou: "广州",
+    Shenzhen: "深圳",
+    Hangzhou: "杭州",
+    Nanjing: "南京",
+    Wuhan: "武汉",
+    Chengdu: "成都",
+    "Xi'an": "西安",
   };
   return mapping[value] ?? value;
 }
@@ -130,7 +142,7 @@ function ResultCard({ item }: { item: RecommendationItem }) {
 
       <p className="recommendation-summary">{item.parentSummary}</p>
       <div className="chip-row" style={{ marginBottom: 8 }}>
-        <span className="chip neutral">城市：{item.city}</span>
+        <span className="chip neutral">城市：{cityLabel(item.city)}</span>
         <span className="chip neutral">学费：{item.tuitionCny} 元/年</span>
       </div>
 
@@ -154,14 +166,6 @@ function ResultCard({ item }: { item: RecommendationItem }) {
             </span>
           ))}
         </div>
-      </div>
-
-      <div className="link-row">
-        {item.sourceIds.map((sourceId) => (
-          <Link className="text-link" href={`/sources/${sourceId}`} key={sourceId}>
-            查看依据：{sourceId}
-          </Link>
-        ))}
       </div>
     </article>
   );
@@ -197,7 +201,6 @@ export function ChatShell() {
   const [lastAction, setLastAction] = useState<string>("ask_followup");
   const [lastNextQuestion, setLastNextQuestion] = useState<string | null>(null);
   const [pendingRecommendationConfirmation, setPendingRecommendationConfirmation] = useState<boolean>(false);
-  const [comparePreview, setComparePreview] = useState<ComparePreview>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
 
@@ -240,30 +243,6 @@ export function ChatShell() {
       disposed = true;
     };
   }, []);
-
-  useEffect(() => {
-    let disposed = false;
-    async function loadComparePreview() {
-      if (!recommendation || recommendation.items.length < 2) {
-        setComparePreview(null);
-        return;
-      }
-      try {
-        const preview = await comparePrograms(recommendation.items[0].programId, recommendation.items[1].programId);
-        if (!disposed) {
-          setComparePreview(preview);
-        }
-      } catch {
-        if (!disposed) {
-          setComparePreview(null);
-        }
-      }
-    }
-    void loadComparePreview();
-    return () => {
-      disposed = true;
-    };
-  }, [recommendation]);
 
   async function handleSendMessage(outgoing: string) {
     if (!threadId || !outgoing.trim() || loading) {
@@ -363,9 +342,6 @@ export function ChatShell() {
                           {BUCKET_LABELS[bucket]} {groupedItems[bucket].length}
                         </span>
                       ))}
-                      <Link className="text-link" href="/compare">
-                        查看详细对比
-                      </Link>
                     </div>
                     {items.map((item) => (
                       <ResultCard item={item} key={item.programId} />
@@ -382,6 +358,9 @@ export function ChatShell() {
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing) {
+                return;
+              }
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
                 void handleSendMessage(draft);
@@ -447,7 +426,7 @@ export function ChatShell() {
                 </span>
                 {(familyConstraints?.cityPreference ?? []).map((city) => (
                   <span className="chip neutral" key={city}>
-                    {city}
+                    {cityLabel(city)}
                   </span>
                 ))}
               </div>
@@ -466,11 +445,10 @@ export function ChatShell() {
             </div>
 
             <div className="summary-section">
-              <label>结果延展</label>
+              <label>接下来怎么继续</label>
               <div className="shortcut-links">
-                <Link href="/compare">查看方案对比</Link>
-                {items[0] ? <Link href={`/sources/${items[0].sourceIds[0]}`}>查看首条依据</Link> : null}
-                {comparePreview ? <span>{comparePreview.summary}</span> : <span>有至少两条候选后，这里会自动出现对比预览。</span>}
+                <span>如果你想继续缩小范围，直接告诉我你更看重城市、专业、预算还是稳妥程度。</span>
+                <span>如果你想比较两条方案，也不用点工具，继续用自然语言告诉我就行。</span>
               </div>
             </div>
           </div>
@@ -479,4 +457,3 @@ export function ChatShell() {
     </div>
   );
 }
-

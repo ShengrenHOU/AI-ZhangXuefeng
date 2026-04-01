@@ -7,7 +7,7 @@
 ### 项目是什么
 
 `AI-ZhangXuefeng` 是一个面向普通家庭的高考志愿助手。  
-它不是“输入分数直接出学校名单”的黑箱工具，而是一个**对话驱动、规则优先、来源可追溯**的决策产品。
+它不是“输入分数直接出学校名单”的黑箱工具，而是一个**对话驱动、模型主导推荐、知识优先检索、来源可追溯**的决策产品。
 
 系统目标是帮助用户在家庭预算、兴趣方向、城市偏好、调剂态度、风险偏好等现实约束下，逐步形成一份更稳妥、可解释、可讨论的志愿草案。
 
@@ -23,7 +23,8 @@
 这个项目的设计选择是反过来的：
 
 - **对话优先**：先把学生档案补完整
-- **规则优先**：模型不能绕过 Recommendation Core 直接拍板
+- **模型主导推荐**：最终推荐由大模型结合已发布知识和专业判断生成
+- **最小硬护栏**：代码负责成熟度门槛、明显冲突、审计记录，而不是替模型拍板
 - **知识治理优先**：线上只读已发布知识，不直接拿开放网页参与正式推荐
 - **来源可追溯**：每条推荐都必须能回到来源记录
 
@@ -34,9 +35,9 @@
 - **在线主链路**
   - 对话状态机
   - 学生 dossier 补全
-  - Recommendation Core 规则过滤与分桶
-  - 已发布知识库查询
-  - 模型负责抽取、追问、解释、组织结构化输出
+  - 已发布知识库检索
+  - 模型负责抽取、追问、推荐、解释、组织结构化输出
+  - Recommendation Core 仅作为 fallback / guardrail 保留
 
 - **离线知识运营**
   - 原始信息采集
@@ -125,7 +126,7 @@ Phase 1 已实现的是**在线 MVP 骨架**。离线知识运营链路留作后
 ### What This Project Is
 
 `AI-ZhangXuefeng` is a dialogue-first gaokao planning assistant for ordinary families.  
-It is not a black-box score-to-school generator. It is a **workflow-driven, rules-first, source-traceable** decision product.
+It is not a black-box score-to-school generator. It is a **workflow-driven, model-led, knowledge-first, source-traceable** decision product.
 
 The goal is to help users build a safer and more explainable application shortlist under real-world constraints such as budget, major interests, city preference, adjustment tolerance, and risk appetite.
 
@@ -141,7 +142,8 @@ The real problem in gaokao planning is not the absence of a chat model. The real
 This project is intentionally designed in the opposite direction:
 
 - **dialogue first**: complete the student dossier step by step
-- **rules first**: the model never bypasses the recommendation core
+- **model-led recommendations**: the model produces the final recommendation draft from published knowledge and professional reasoning
+- **minimal hard guardrails**: code enforces readiness, obvious conflict checks, and auditability instead of acting as the main recommender
 - **governed knowledge first**: the online runtime reads only published knowledge
 - **source traceability first**: every recommendation item must point back to source records
 
@@ -152,9 +154,9 @@ The repository follows a dual-runtime shape:
 - **online runtime**
   - dialogue state machine
   - dossier completion
-  - deterministic recommendation core
-  - published knowledge lookups
-  - model-assisted extraction, follow-up questions, and explanation
+  - published knowledge retrieval
+  - model-led recommendation synthesis
+  - fallback / guardrail recommendation core
 
 - **offline knowledge operations**
   - source collection

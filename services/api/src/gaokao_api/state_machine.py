@@ -7,9 +7,9 @@ from typing import Any
 
 from knowledge_base import KnowledgeRepository
 from recommendation_core import RecommendationCore
-from recommendation_core.models import FamilyConstraintSet, RecommendationRequest, StudentDossier
+from recommendation_core.models import FamilyConstraintSet, RecommendationDecision, RecommendationRequest, RecommendationRun, StudentDossier
 
-from .llm import ArkCodingPlanClient, PlannerAction
+from .llm import ArkCodingPlanClient, PlannerAction, RecommendationSelection
 
 
 FOLLOW_UP_ORDER = [
@@ -79,6 +79,22 @@ OUTSIDE_HENAN_CITIES = {
     "武汉": "Wuhan",
     "成都": "Chengdu",
     "西安": "Xi'an",
+}
+
+DISPLAY_LABELS = {
+    "henan": "河南",
+    "Beijing": "北京",
+    "Shanghai": "上海",
+    "Shenzhen": "深圳",
+    "Guangzhou": "广州",
+    "Hangzhou": "杭州",
+    "Nanjing": "南京",
+    "Wuhan": "武汉",
+    "Chengdu": "成都",
+    "Xi'an": "西安",
+    "Zhengzhou": "郑州",
+    "Xinyang": "信阳",
+    "Xinxiang": "新乡",
 }
 
 SUBJECT_COMBINATION_ALIASES = {
@@ -155,6 +171,7 @@ class SessionStateMachine:
 
         recommendation = None
         next_question: str | None = None
+        reasoning_summary_override: str | None = None
 
         if readiness["conflicts"]:
             action = "confirm_constraints"
@@ -162,8 +179,14 @@ class SessionStateMachine:
             pending_recommendation_confirmation = False
             next_question = self._next_question(dossier, readiness, planner_action)
             assistant_message = next_question or readiness["conflicts"][0]["message"]
+        elif pending_recommendation_confirmation and self._is_negative_confirmation(content):
+            action = "ask_followup"
+            state_name = "follow_up_questioning"
+            pending_recommendation_confirmation = False
+            next_question = "好，我们先不正式推荐。你最想先改哪一项条件？比如位次、选科、预算，或者你更在意离家近和城市本身哪个。"
+            assistant_message = next_question
         elif pending_recommendation_confirmation and readiness["can_recommend"] and self._is_affirmation(content):
-            recommendation = self._run_recommendation(state["thread_id"], dossier)
+            recommendation, recommendation_summary = self._run_recommendation(state["thread_id"], dossier)
             action = "explain_results"
             state_name = "result_explanation"
             pending_recommendation_confirmation = False
@@ -172,13 +195,8 @@ class SessionStateMachine:
                 {key: "user_confirmed" for key in self._confirmed_paths(dossier)},
                 {},
             )
-            assistant_message = self._build_ready_summary(planner_action)
-        elif pending_recommendation_confirmation and self._is_negative_confirmation(content):
-            action = "ask_followup"
-            state_name = "follow_up_questioning"
-            pending_recommendation_confirmation = False
-            next_question = "好，我们先不正式推荐。你最想先改哪一项条件？比如位次、选科、预算，或者你更在意离家近和城市本身哪个。"
-            assistant_message = next_question
+            assistant_message = recommendation_summary
+            reasoning_summary_override = recommendation_summary
         elif readiness["can_recommend"]:
             action = "confirm_constraints"
             state_name = "constraint_confirmation"
@@ -213,7 +231,7 @@ class SessionStateMachine:
                 "action": action,
                 "dossierPatch": patch.model_dump(exclude_none=True, exclude_defaults=True),
                 "nextQuestion": next_question,
-                "reasoningSummary": self._reasoning_summary(planner_action, readiness, recommendation is not None),
+                "reasoningSummary": reasoning_summary_override or self._reasoning_summary(planner_action, readiness, recommendation is not None),
                 "sourceIds": recommendation["items"][0]["source_ids"] if recommendation and recommendation["items"] else planner_action.source_ids if planner_action else [],
                 "readiness": readiness,
             },
@@ -276,15 +294,36 @@ class SessionStateMachine:
             readiness_level=readiness_level,
         )
 
-    def _run_recommendation(self, thread_id: str, dossier: StudentDossier) -> dict[str, Any]:
+    def build_recommendation_run(self, thread_id: str, dossier: StudentDossier) -> tuple[dict[str, Any], str]:
+        return self._run_recommendation(thread_id, dossier)
+
+    def _run_recommendation(self, thread_id: str, dossier: StudentDossier) -> tuple[dict[str, Any], str]:
+        knowledge_slice = self._retrieve_knowledge_slice(dossier)
+        knowledge_version = knowledge_slice["knowledge_version"]
+
+        if self.planner_client is not None and self.planner_client.is_configured():
+            recommendation_selection = self.planner_client.recommend_from_knowledge(
+                dossier=dossier.model_dump(),
+                retrieved_knowledge=knowledge_slice,
+            )
+            if recommendation_selection is not None:
+                model_led_run = self._materialize_recommendation_run(
+                    thread_id=thread_id,
+                    selection=recommendation_selection,
+                    retrieved_knowledge=knowledge_slice,
+                    knowledge_version=knowledge_version,
+                )
+                if model_led_run.items:
+                    return model_led_run.model_dump(), recommendation_selection.reasoning_summary
+
         run = self.recommendation_core.run(
             request=RecommendationRequest(thread_id=thread_id, dossier=dossier),
             programs=self.repository.load_programs(province=self.province, year=self.target_year),
             schools=self.repository.load_schools(province=self.province, year=self.target_year),
-            knowledge_version=self.repository.load_manifest(province=self.province, year=self.target_year)["version"],
-            model_version="mock-structured-output",
+            knowledge_version=knowledge_version,
+            model_version="knowledge-first-fallback",
         )
-        return run.model_dump()
+        return run.model_dump(), "我先基于当前已发布知识和你确认过的条件，整理出一版更稳妥的建议。后面你继续补条件，我会继续帮你重排。"
 
     def _patch_from_action(self, planner_action: PlannerAction | None) -> StudentDossier:
         if planner_action is None:
@@ -320,6 +359,132 @@ class SessionStateMachine:
             else:
                 updated[key] = value
         return StudentDossier(**updated)
+
+    def _retrieve_knowledge_slice(self, dossier: StudentDossier) -> dict[str, Any]:
+        manifest = self.repository.load_manifest(province=self.province, year=self.target_year)
+        programs = self.repository.load_programs(province=self.province, year=self.target_year)
+        schools = self.repository.load_schools(province=self.province, year=self.target_year)
+        sources = self.repository.load_sources(province=self.province, year=self.target_year)
+
+        school_index = {school["school_id"]: school for school in schools}
+        source_index = {source["source_id"]: source for source in sources}
+        candidates: list[dict[str, Any]] = []
+
+        for program in programs:
+            required_subjects = set(program.get("subject_requirements", []))
+            dossier_subjects = set(dossier.subject_combination)
+            if required_subjects and dossier_subjects and not required_subjects.issubset(dossier_subjects):
+                continue
+
+            school = school_index[program["school_id"]]
+            retrieval_score = self._candidate_retrieval_score(dossier, program)
+            merged_source_ids = sorted(set(program.get("source_ids", []) + school.get("source_ids", [])))
+            source_summaries = [
+                {
+                    "source_id": source_id,
+                    "kind": source_index[source_id]["kind"],
+                    "title": source_index[source_id]["title"],
+                    "summary": source_index[source_id]["summary"],
+                }
+                for source_id in merged_source_ids
+                if source_id in source_index
+            ]
+
+            candidates.append(
+                {
+                    "program_id": program["program_id"],
+                    "school_id": program["school_id"],
+                    "school_name": school["name"],
+                    "program_name": program["name"],
+                    "city": program["city"],
+                    "tuition_cny": program["tuition_cny"],
+                    "historical_rank": program["historical_rank"],
+                    "tags": program.get("tags", []),
+                    "subject_requirements": program.get("subject_requirements", []),
+                    "school_tier": school.get("tier"),
+                    "source_ids": merged_source_ids,
+                    "source_summaries": source_summaries,
+                    "retrieval_score": retrieval_score,
+                }
+            )
+
+        candidates.sort(key=lambda item: item["retrieval_score"], reverse=True)
+        top_candidates = candidates[:6]
+        for index, candidate in enumerate(top_candidates, start=1):
+            candidate["retrieval_rank"] = index
+            candidate["city_label"] = DISPLAY_LABELS.get(candidate["city"], candidate["city"])
+
+        return {
+            "province": self.province,
+            "target_year": self.target_year,
+            "knowledge_version": manifest["version"],
+            "candidates": top_candidates,
+        }
+
+    def _candidate_retrieval_score(self, dossier: StudentDossier, program: dict[str, Any]) -> float:
+        score = 0.2
+        tags = set(program.get("tags", []))
+
+        if dossier.major_interests and tags.intersection(dossier.major_interests):
+            score += 0.35
+        if dossier.family_constraints.city_preference and program["city"] in dossier.family_constraints.city_preference:
+            score += 0.18
+        if dossier.family_constraints.annual_budget_cny is not None and program["tuition_cny"] <= dossier.family_constraints.annual_budget_cny:
+            score += 0.08
+        if dossier.family_constraints.distance_preference == "near_home" and program["city"] in {"Zhengzhou", "Xinxiang", "Xinyang"}:
+            score += 0.06
+        if dossier.rank is not None:
+            rank_gap = abs(program["historical_rank"] - dossier.rank)
+            score += max(0.0, 0.22 - min(rank_gap / 120000, 0.22))
+        return round(min(score, 0.99), 3)
+
+    def _materialize_recommendation_run(
+        self,
+        *,
+        thread_id: str,
+        selection: RecommendationSelection,
+        retrieved_knowledge: dict[str, Any],
+        knowledge_version: str,
+    ) -> RecommendationRun:
+        candidate_index = {candidate["program_id"]: candidate for candidate in retrieved_knowledge.get("candidates", [])}
+        decisions: list[RecommendationDecision] = []
+
+        for selection_item in selection.items:
+            candidate = candidate_index.get(selection_item.program_id)
+            if candidate is None:
+                continue
+
+            decisions.append(
+                RecommendationDecision(
+                    school_id=candidate["school_id"],
+                    program_id=selection_item.program_id,
+                    school_name=candidate["school_name"],
+                    program_name=candidate["program_name"],
+                    city=candidate["city_label"],
+                    tuition_cny=candidate["tuition_cny"],
+                    bucket=selection_item.bucket,
+                    fit_reasons=selection_item.fit_reasons,
+                    risk_warnings=selection_item.risk_warnings,
+                    parent_summary=selection_item.parent_summary,
+                    source_ids=candidate["source_ids"],
+                    trace=[
+                        "selection=model_led",
+                        f"knowledge_version={knowledge_version}",
+                        f"retrieval_rank={candidate['retrieval_rank']}",
+                        f"retrieval_score={candidate['retrieval_score']}",
+                        f"thread_id={thread_id}",
+                    ],
+                    score=float(candidate["retrieval_score"]),
+                )
+            )
+
+        return RecommendationRun(
+            trace_id=str(uuid.uuid4()),
+            rules_version="guardrails-v0.2.0",
+            knowledge_version=knowledge_version,
+            model_version=self.planner_client.model if self.planner_client and self.planner_client.is_configured() else "knowledge-first-fallback",
+            items=decisions,
+        )
 
     def _build_confirmation_prompt(self, dossier: StudentDossier) -> str:
         fields = [
@@ -417,6 +582,8 @@ class SessionStateMachine:
         return "当前信息还没成熟到可以正式推荐，我会继续通过多轮对话把关键条件补全。"
 
     def _is_affirmation(self, content: str) -> bool:
+        if self._is_negative_confirmation(content):
+            return False
         lowered = content.lower()
         return any(signal in content or signal in lowered for signal in AFFIRMATIVE_RECOMMENDATION_SIGNALS)
 
@@ -451,6 +618,7 @@ class SessionStateMachine:
             return ""
         if passthrough:
             mapping = {
+                "henan": "河南",
                 "near_home": "希望离家近",
                 "balanced": "平衡考虑",
                 "nationwide": "全国都可",
@@ -458,6 +626,7 @@ class SessionStateMachine:
                 "aggressive": "偏冲",
                 "接受调剂": "接受调剂",
                 "不接受调剂": "不接受调剂",
+                **DISPLAY_LABELS,
             }
             return "、".join(mapping.get(value, value) for value in values)
         if subject_mode:

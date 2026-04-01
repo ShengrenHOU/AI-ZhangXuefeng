@@ -103,3 +103,16 @@ def test_state_machine_preserves_confirmation_but_allows_negative_reply() -> Non
     assert second["state"] == "follow_up_questioning"
     assert second["pending_recommendation_confirmation"] is False
     assert second["recommendation"] is None
+
+
+def test_state_machine_does_not_misread_negative_reply_as_affirmation() -> None:
+    machine = make_machine()
+    state = machine.initialize()
+    machine.handle_message(
+        state,
+        "河南，位次: 65000，选科是物化生，预算: 6500，想学计算机，接受调剂。",
+    )
+    second = machine.handle_message(state, "不可以，先别正式推荐，我还想再改一下条件。")
+    assert second["state"] == "follow_up_questioning"
+    assert second["pending_recommendation_confirmation"] is False
+    assert second["recommendation"] is None

@@ -35,10 +35,9 @@ app.add_middleware(
 )
 
 knowledge_repo = KnowledgeRepository.from_root(settings.knowledge_path)
-recommendation_core = RecommendationCore()
 state_machine = SessionStateMachine(
     repository=knowledge_repo,
-    recommendation_core=recommendation_core,
+    recommendation_core=RecommendationCore(),
     planner_client=ArkCodingPlanClient(),
     province=settings.province,
     target_year=settings.target_year,
@@ -141,15 +140,8 @@ def get_session(thread_id: str) -> SessionSnapshotResponse:
 
 @app.post("/api/recommendation/run")
 def run_recommendation(request: RecommendationRequest) -> dict:
-    manifest = knowledge_repo.load_manifest(province=settings.province, year=settings.target_year)
-    run = recommendation_core.run(
-        request=request,
-        programs=knowledge_repo.load_programs(province=settings.province, year=settings.target_year),
-        schools=knowledge_repo.load_schools(province=settings.province, year=settings.target_year),
-        knowledge_version=manifest["version"],
-        model_version=settings.ark_model if settings.ark_api_key else "mock-structured-output",
-    )
-    return run.model_dump()
+    run, _ = state_machine.build_recommendation_run(request.thread_id or "adhoc-run", request.dossier)
+    return run
 
 
 @app.post("/api/recommendation/compare", response_model=CompareResponse)
@@ -182,16 +174,16 @@ def export_family_summary(request: RecommendationRequest) -> ExportSummaryRespon
     items = run["items"]
     source_ids = sorted({source_id for item in items for source_id in item["source_ids"]})
     lines = [
-        "Family Summary",
+        "家庭沟通摘要",
         "",
-        f"Province: {request.dossier.province or settings.province}",
-        f"Year: {request.dossier.target_year or settings.target_year}",
+        f"省份：{request.dossier.province or settings.province}",
+        f"年份：{request.dossier.target_year or settings.target_year}",
         "",
     ]
     for item in items[:3]:
-        lines.append(f"- {item['program_id']} ({item['bucket']}): {item['parent_summary']}")
+        lines.append(f"- {item['school_name']} / {item['program_name']}（{item['bucket']}）：{item['parent_summary']}")
     return ExportSummaryResponse(
-        title="Gaokao Family Summary",
+        title="高考志愿家庭摘要",
         body="\n".join(lines),
         source_ids=source_ids,
         trace_id=run["trace_id"],

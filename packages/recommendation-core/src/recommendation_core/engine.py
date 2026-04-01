@@ -6,6 +6,21 @@ from typing import Any
 
 from .models import RecommendationDecision, RecommendationRequest, RecommendationRun
 
+CITY_LABELS = {
+    "Zhengzhou": "郑州",
+    "Xinyang": "信阳",
+    "Xinxiang": "新乡",
+    "Beijing": "北京",
+    "Shanghai": "上海",
+    "Guangzhou": "广州",
+    "Shenzhen": "深圳",
+    "Hangzhou": "杭州",
+    "Nanjing": "南京",
+    "Wuhan": "武汉",
+    "Chengdu": "成都",
+    "Xi'an": "西安",
+}
+
 
 @dataclass(slots=True)
 class RecommendationCore:
@@ -133,7 +148,8 @@ class RecommendationCore:
         return risks or ["最终填报前，仍需要和官方规则与招生章程再次核对"]
 
     def _build_fit_reasons(self, request: RecommendationRequest, program: dict[str, Any], school: dict[str, Any]) -> list[str]:
-        reasons = [f"{school['name']}位于{program['city']}，与当前地域偏好更容易结合"]
+        city_name = CITY_LABELS.get(program["city"], program["city"])
+        reasons = [f"{school['name']}位于{city_name}，与当前地域偏好更容易结合"]
         if request.dossier.risk_appetite == "conservative":
             reasons.append("你当前偏向稳妥方案，系统会优先保留更稳的候选")
         if request.dossier.family_constraints.distance_preference == "near_home":

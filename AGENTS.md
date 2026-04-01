@@ -8,8 +8,9 @@ This file applies to everything under `E:/research_projects/gaokao-mvp`.
 
 - This is a product repository, not a generic agent playground.
 - The online recommendation path is workflow-first.
-- Models may extract, ask follow-up questions, explain, and organize outputs.
-- Models may not directly invent school-program recommendations.
+- Models may extract, ask follow-up questions, retrieve governed knowledge, and produce final recommendation drafts.
+- Published knowledge must be the primary recommendation context.
+- Code should keep minimal hard guardrails, provenance, and auditability instead of replacing the model as the main recommender.
 - Every recommendation item must keep at least one `source_id`.
 - Use English filenames only.
 
@@ -22,14 +23,13 @@ This file applies to everything under `E:/research_projects/gaokao-mvp`.
 
 ## Online Runtime Boundaries
 
-- `services/api` owns session flow, dossier persistence, API routing, and output validation.
-- `packages/recommendation-core` owns deterministic filtering, scoring, bucket classification, and rule traces.
+- `services/api` owns session flow, dossier persistence, API routing, published-knowledge retrieval, and output validation.
+- `packages/recommendation-core` remains a fallback and guardrail layer, not the primary online recommender.
 - `packages/knowledge` owns source records and knowledge version reads.
-- `apps/web` owns product UX only and should not hide source or risk metadata.
+- `apps/web` owns product UX only and should keep source links and provenance hidden by default unless the user explicitly drills down.
 
 ## Validation
 
 - Run API tests before claiming the backend is ready.
 - Run the web build before claiming the frontend scaffold is ready.
 - If a feature is stubbed, say so explicitly and keep the interface stable.
-
