@@ -246,25 +246,12 @@ class SessionStateMachine:
                     )
                 task_timeline.append(self._task_step("recommend", "completed", "正在生成正式建议"))
         elif readiness["can_recommend"]:
-            recommendation_fingerprint = self._recommendation_fingerprint(dossier)
-            if cached_recommendation and cached_recommendation_fingerprint == recommendation_fingerprint:
-                recommendation = cached_recommendation
-                recommendation_summary = "我先沿用这版已经成熟的建议。如果你继续改条件，我会实时重排。"
-            else:
-                task_timeline.append(self._task_step("retrieve", "completed", "正在检索已发布知识与公开信息"))
-                recommendation, recommendation_summary = self._run_recommendation(state["thread_id"], dossier)
-            action = "recommend" if cached_recommendation is None else "refine_recommendation"
-            state_name = "result_explanation"
-            pending_recommendation_confirmation = False
-            assistant_message = recommendation_summary
-            reasoning_summary_override = recommendation_summary
-            if recommendation is not None:
-                recommendation_versions = self._append_recommendation_version(
-                    recommendation_versions,
-                    recommendation,
-                    label="当前版本" if not recommendation_versions else "新一版",
-                )
-            task_timeline.append(self._task_step("recommend", "completed", "正在生成正式建议"))
+            action = "confirm_constraints"
+            state_name = "constraint_confirmation"
+            pending_recommendation_confirmation = True
+            next_question = self._build_confirmation_prompt(dossier)
+            assistant_message = next_question
+            task_timeline.append(self._task_step("reflect", "completed", "正在确认最新条件"))
         elif self._looks_like_recommendation_request(content):
             action = "directional_guidance"
             state_name = "directional_guidance"

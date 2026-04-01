@@ -122,9 +122,24 @@ export type CompareResult = {
 export type StreamEvent =
   | { event: "status"; data: { message: string } }
   | { event: "task_step"; data: UiTaskStep }
-  | { event: "directional_guidance"; data: { assistant_message: string; readiness: any } }
-  | { event: "recommendation_delta"; data: any }
-  | { event: "final_message"; data: any };
+  | { event: "directional_guidance"; data: { assistantMessage: string; readiness: UiReadiness } }
+  | { event: "recommendation_delta"; data: RecommendationItem }
+  | {
+      event: "final_message";
+      data: {
+        threadId: string;
+        state: string;
+        assistantMessage: string;
+        dossier: UiDossier;
+        readiness: UiReadiness;
+        pendingRecommendationConfirmation: boolean;
+        fieldProvenance: FieldProvenance;
+        recommendation: UiRecommendationRun | null;
+        recommendationVersions: UiRecommendationVersion[];
+        taskTimeline: UiTaskStep[];
+        modelAction: ChatResult["modelAction"];
+      };
+    };
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
@@ -334,8 +349,66 @@ export async function sendStreamMessage(
       const dataLine = chunk.split("\n").find((line) => line.startsWith("data:"));
       if (!eventLine || !dataLine) continue;
       const event = eventLine.replace("event:", "").trim() as StreamEvent["event"];
-      const data = JSON.parse(dataLine.replace("data:", "").trim());
-      onEvent({ event, data } as StreamEvent);
+      const raw = JSON.parse(dataLine.replace("data:", "").trim());
+      if (event === "task_step") {
+        onEvent({ event, data: mapTaskStep(raw) });
+        continue;
+      }
+      if (event === "directional_guidance") {
+        onEvent({
+          event,
+          data: {
+            assistantMessage: raw.assistant_message,
+            readiness: mapReadiness(raw.readiness)
+          }
+        });
+        continue;
+      }
+      if (event === "recommendation_delta") {
+        onEvent({
+          event,
+          data: {
+            schoolId: raw.school_id,
+            programId: raw.program_id,
+            schoolName: raw.school_name,
+            programName: raw.program_name,
+            city: raw.city,
+            tuitionCny: raw.tuition_cny,
+            bucket: raw.bucket as RecommendationBucket,
+            fitReasons: raw.fit_reasons ?? [],
+            riskWarnings: raw.risk_warnings ?? [],
+            parentSummary: raw.parent_summary,
+            sourceIds: raw.source_ids ?? []
+          }
+        });
+        continue;
+      }
+      if (event === "final_message") {
+        onEvent({
+          event,
+          data: {
+            threadId: raw.thread_id,
+            state: raw.state,
+            assistantMessage: raw.assistant_message,
+            dossier: mapDossier(raw.dossier),
+            readiness: mapReadiness(raw.readiness),
+            pendingRecommendationConfirmation: raw.pending_recommendation_confirmation,
+            fieldProvenance: raw.field_provenance ?? {},
+            recommendation: raw.recommendation ? mapRecommendation(raw.recommendation) : null,
+            recommendationVersions: (raw.recommendation_versions ?? []).map(mapRecommendationVersion),
+            taskTimeline: (raw.task_timeline ?? []).map(mapTaskStep),
+            modelAction: {
+              action: raw.model_action.action,
+              nextQuestion: raw.model_action.nextQuestion ?? null,
+              reasoningSummary: raw.model_action.reasoningSummary,
+              sourceIds: raw.model_action.sourceIds ?? [],
+              readiness: raw.model_action.readiness ? mapReadiness(raw.model_action.readiness) : undefined
+            }
+          }
+        });
+        continue;
+      }
+      onEvent({ event, data: raw } as StreamEvent);
     }
   }
 }

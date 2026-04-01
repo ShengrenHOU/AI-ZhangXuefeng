@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import tempfile
+import uuid
 
-db_path = Path("./services/api/test_gaokao_mvp.db")
-if db_path.exists():
-    db_path.unlink()
+db_path = Path(tempfile.gettempdir()) / f"gaokao_mvp_test_{uuid.uuid4().hex}.db"
 
-os.environ["DATABASE_URL"] = "sqlite:///./services/api/test_gaokao_mvp.db"
+os.environ["DATABASE_URL"] = f"sqlite:///{db_path.resolve().as_posix()}"
 os.environ["ENABLE_LIVE_LLM"] = "false"
 
 from fastapi.testclient import TestClient  # noqa: E402
@@ -34,9 +34,9 @@ def test_session_flow_and_dossier_endpoint() -> None:
     assert message.status_code == 200
     payload = message.json()
     assert payload["thread_id"] == thread_id
-    assert payload["recommendation"] is not None
+    assert payload["recommendation"] is None
     assert payload["readiness"]["can_recommend"] is True
-    assert payload["pending_recommendation_confirmation"] is False
+    assert payload["pending_recommendation_confirmation"] is True
     assert payload["field_provenance"]
 
     confirm = client.post(
@@ -89,6 +89,23 @@ def test_conflict_message_does_not_recommend() -> None:
     assert payload["state"] == "constraint_confirmation"
     assert payload["recommendation"] is None
     assert payload["readiness"]["conflicts"]
+
+
+def test_stream_endpoint_emits_status_and_final_message() -> None:
+    start = client.post("/api/session/start")
+    thread_id = start.json()["thread_id"]
+    with client.stream(
+        "POST",
+        f"/api/session/{thread_id}/stream",
+        json={"content": "河南，位次: 68000，physics chemistry biology，预算: 6500，想学电气，稳一点。"},
+    ) as response:
+        assert response.status_code == 200
+        body = response.read().decode("utf-8")
+
+    assert "event: status" in body
+    assert "event: final_message" in body
+    assert "recommendation_versions" in body
+    assert "task_timeline" in body
 
 
 def test_stream_endpoint_returns_task_steps_and_final_message() -> None:

@@ -369,14 +369,14 @@ export function ChatShell() {
           const payload = event.data;
           setDossier(payload.dossier);
           setReadiness(payload.readiness);
-          setReasoningSummary(payload.model_action.reasoningSummary);
-          setLastAction(payload.model_action.action);
-          setLastNextQuestion(payload.model_action.nextQuestion ?? null);
-          setPendingRecommendationConfirmation(payload.pending_recommendation_confirmation);
-          setMessages((current) => [...current, { role: "assistant", content: payload.assistant_message }]);
+          setReasoningSummary(payload.modelAction.reasoningSummary);
+          setLastAction(payload.modelAction.action);
+          setLastNextQuestion(payload.modelAction.nextQuestion ?? null);
+          setPendingRecommendationConfirmation(payload.pendingRecommendationConfirmation);
+          setMessages((current) => [...current, { role: "assistant", content: payload.assistantMessage }]);
           setRecommendation(payload.recommendation);
-          setRecommendationVersions(payload.recommendation_versions ?? []);
-          setTaskTimeline(payload.task_timeline ?? []);
+          setRecommendationVersions(payload.recommendationVersions ?? []);
+          setTaskTimeline(payload.taskTimeline ?? []);
         }
       });
     } catch {
