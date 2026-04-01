@@ -1,9 +1,12 @@
 export type ConversationActionType =
   | "ask_followup"
+  | "directional_guidance"
   | "update_dossier"
   | "confirm_constraints"
-  | "explain_results"
+  | "recommend"
   | "compare_options"
+  | "refine_recommendation"
+  | "explain_reasoning"
   | "refuse";
 
 export type RecommendationBucket = "reach" | "match" | "safe";
@@ -80,6 +83,14 @@ export interface RecommendationRun {
   items: RecommendationItem[];
 }
 
+export interface RecommendationVersion {
+  id: string;
+  label: string;
+  reason: string;
+  createdAt: string;
+  recommendation: RecommendationRun;
+}
+
 export interface ComparePayload {
   leftProgramId: string;
   rightProgramId: string;
@@ -118,4 +129,12 @@ export interface ConversationAction {
   reasoningSummary: string;
   sourceIds: string[];
   readiness?: ReadinessState;
+}
+
+export interface TaskStep {
+  id: string;
+  kind: "status" | "task_step";
+  title: string;
+  detail: string;
+  state: "running" | "completed";
 }

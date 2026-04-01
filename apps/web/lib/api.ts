@@ -55,6 +55,19 @@ export type UiRecommendationRun = {
   items: RecommendationItem[];
 };
 
+export type UiRecommendationVersion = {
+  label: string;
+  traceId: string;
+  fingerprint: string;
+  itemCount: number;
+};
+
+export type UiTaskStep = {
+  step: string;
+  status: string;
+  label: string;
+};
+
 export type SessionSnapshot = {
   threadId: string;
   state: string;
@@ -64,6 +77,8 @@ export type SessionSnapshot = {
   pendingRecommendationConfirmation: boolean;
   fieldProvenance: FieldProvenance;
   recommendation: UiRecommendationRun | null;
+  recommendationVersions: UiRecommendationVersion[];
+  taskTimeline: UiTaskStep[];
 };
 
 export type ChatResult = {
@@ -75,6 +90,8 @@ export type ChatResult = {
   pendingRecommendationConfirmation: boolean;
   fieldProvenance: FieldProvenance;
   recommendation: UiRecommendationRun | null;
+  recommendationVersions: UiRecommendationVersion[];
+  taskTimeline: UiTaskStep[];
   modelAction: {
     action: string;
     nextQuestion?: string | null;
@@ -101,6 +118,13 @@ export type CompareResult = {
   summary: string;
   sourceIds: string[];
 };
+
+export type StreamEvent =
+  | { event: "status"; data: { message: string } }
+  | { event: "task_step"; data: UiTaskStep }
+  | { event: "directional_guidance"; data: { assistant_message: string; readiness: any } }
+  | { event: "recommendation_delta"; data: any }
+  | { event: "final_message"; data: any };
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
@@ -182,6 +206,23 @@ function mapCompare(input: any): CompareResult {
   };
 }
 
+function mapRecommendationVersion(input: any): UiRecommendationVersion {
+  return {
+    label: input.label,
+    traceId: input.trace_id,
+    fingerprint: input.fingerprint,
+    itemCount: input.item_count
+  };
+}
+
+function mapTaskStep(input: any): UiTaskStep {
+  return {
+    step: input.step,
+    status: input.status,
+    label: input.label
+  };
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
@@ -208,7 +249,9 @@ export async function startSession(): Promise<SessionSnapshot> {
     readiness: mapReadiness(payload.readiness),
     pendingRecommendationConfirmation: payload.pending_recommendation_confirmation,
     fieldProvenance: payload.field_provenance ?? {},
-    recommendation: payload.recommendation ? mapRecommendation(payload.recommendation) : null
+    recommendation: payload.recommendation ? mapRecommendation(payload.recommendation) : null,
+    recommendationVersions: (payload.recommendation_versions ?? []).map(mapRecommendationVersion),
+    taskTimeline: (payload.task_timeline ?? []).map(mapTaskStep)
   };
 }
 
@@ -222,7 +265,9 @@ export async function getSession(threadId: string): Promise<SessionSnapshot> {
     readiness: mapReadiness(payload.readiness),
     pendingRecommendationConfirmation: payload.pending_recommendation_confirmation,
     fieldProvenance: payload.field_provenance ?? {},
-    recommendation: payload.recommendation ? mapRecommendation(payload.recommendation) : null
+    recommendation: payload.recommendation ? mapRecommendation(payload.recommendation) : null,
+    recommendationVersions: (payload.recommendation_versions ?? []).map(mapRecommendationVersion),
+    taskTimeline: (payload.task_timeline ?? []).map(mapTaskStep)
   };
 }
 
@@ -240,6 +285,8 @@ export async function sendMessage(threadId: string, content: string): Promise<Ch
     pendingRecommendationConfirmation: payload.pending_recommendation_confirmation,
     fieldProvenance: payload.field_provenance ?? {},
     recommendation: payload.recommendation ? mapRecommendation(payload.recommendation) : null,
+    recommendationVersions: (payload.recommendation_versions ?? []).map(mapRecommendationVersion),
+    taskTimeline: (payload.task_timeline ?? []).map(mapTaskStep),
     modelAction: {
       action: payload.model_action.action,
       nextQuestion: payload.model_action.nextQuestion ?? null,
@@ -248,6 +295,49 @@ export async function sendMessage(threadId: string, content: string): Promise<Ch
       readiness: payload.model_action.readiness ? mapReadiness(payload.model_action.readiness) : undefined
     }
   };
+}
+
+export async function sendStreamMessage(
+  threadId: string,
+  content: string,
+  onEvent: (event: StreamEvent) => void
+): Promise<void> {
+  const response = await fetch(`${API_BASE}/api/session/${threadId}/stream`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ content }),
+    cache: "no-store"
+  });
+  if (!response.ok || !response.body) {
+    const detail = await response.text();
+    throw new Error(detail || `Request failed: ${response.status}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    let separatorIndex = buffer.indexOf("\n\n");
+    while (separatorIndex !== -1) {
+      const chunk = buffer.slice(0, separatorIndex);
+      buffer = buffer.slice(separatorIndex + 2);
+      separatorIndex = buffer.indexOf("\n\n");
+
+      const eventLine = chunk.split("\n").find((line) => line.startsWith("event:"));
+      const dataLine = chunk.split("\n").find((line) => line.startsWith("data:"));
+      if (!eventLine || !dataLine) continue;
+      const event = eventLine.replace("event:", "").trim() as StreamEvent["event"];
+      const data = JSON.parse(dataLine.replace("data:", "").trim());
+      onEvent({ event, data } as StreamEvent);
+    }
+  }
 }
 
 export async function fetchSource(sourceId: string): Promise<SourceRecord> {

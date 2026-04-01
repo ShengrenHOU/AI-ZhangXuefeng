@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from knowledge_base import KnowledgeRepository
 from recommendation_core import RecommendationCore
 from recommendation_core.models import RecommendationRequest, StudentDossier
@@ -70,6 +72,8 @@ def start_session() -> SessionStartResponse:
         field_provenance=initial["field_provenance"],
         recommendation=None,
         recommendation_fingerprint=None,
+        recommendation_versions=[],
+        task_timeline=[],
     )
     return SessionStartResponse(
         thread_id=initial["thread_id"],
@@ -79,6 +83,8 @@ def start_session() -> SessionStartResponse:
         pending_recommendation_confirmation=initial["pending_recommendation_confirmation"],
         field_provenance=initial["field_provenance"],
         recommendation=None,
+        recommendation_versions=[],
+        task_timeline=[],
     )
 
 
@@ -97,6 +103,8 @@ def send_message(thread_id: str, payload: ChatMessageRequest) -> ChatMessageResp
         "field_provenance": existing.field_provenance,
         "recommendation": existing.recommendation,
         "recommendation_fingerprint": existing.recommendation_fingerprint,
+        "recommendation_versions": existing.recommendation_versions,
+        "task_timeline": existing.task_timeline,
     }
     result = state_machine.handle_message(state, payload.content)
     session_repo.update(
@@ -108,6 +116,8 @@ def send_message(thread_id: str, payload: ChatMessageRequest) -> ChatMessageResp
         field_provenance=result["field_provenance"],
         recommendation=result["recommendation"] if result["recommendation"] is not None else existing.recommendation,
         recommendation_fingerprint=result["recommendation_fingerprint"],
+        recommendation_versions=result["recommendation_versions"],
+        task_timeline=result["task_timeline"],
     )
 
     return ChatMessageResponse(
@@ -120,6 +130,8 @@ def send_message(thread_id: str, payload: ChatMessageRequest) -> ChatMessageResp
         pending_recommendation_confirmation=result["pending_recommendation_confirmation"],
         field_provenance=result["field_provenance"],
         recommendation=result["recommendation"] if result["recommendation"] is not None else existing.recommendation,
+        recommendation_versions=result["recommendation_versions"],
+        task_timeline=result["task_timeline"],
     )
 
 
@@ -145,7 +157,79 @@ def get_session(thread_id: str) -> SessionSnapshotResponse:
         pending_recommendation_confirmation=existing.pending_recommendation_confirmation,
         field_provenance=existing.field_provenance,
         recommendation=existing.recommendation,
+        recommendation_versions=existing.recommendation_versions,
+        task_timeline=existing.task_timeline,
     )
+
+
+@app.post("/api/session/{thread_id}/stream")
+def stream_message(thread_id: str, payload: ChatMessageRequest) -> StreamingResponse:
+    existing = session_repo.get(thread_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="thread not found")
+
+    state = {
+        "thread_id": existing.thread_id,
+        "state": existing.state,
+        "dossier": existing.dossier,
+        "messages": existing.messages,
+        "pending_recommendation_confirmation": existing.pending_recommendation_confirmation,
+        "field_provenance": existing.field_provenance,
+        "recommendation": existing.recommendation,
+        "recommendation_fingerprint": existing.recommendation_fingerprint,
+        "recommendation_versions": existing.recommendation_versions,
+        "task_timeline": existing.task_timeline,
+    }
+
+    result = state_machine.handle_message(state, payload.content)
+    persisted_recommendation = result["recommendation"] if result["recommendation"] is not None else existing.recommendation
+
+    session_repo.update(
+        thread_id,
+        result["state"],
+        result["dossier"],
+        state["messages"],
+        pending_recommendation_confirmation=result["pending_recommendation_confirmation"],
+        field_provenance=result["field_provenance"],
+        recommendation=persisted_recommendation,
+        recommendation_fingerprint=result["recommendation_fingerprint"],
+        recommendation_versions=result["recommendation_versions"],
+        task_timeline=result["task_timeline"],
+    )
+
+    def event_stream():
+        yield _sse_event("status", {"message": "正在理解你的意图"})
+        for step in result["task_timeline"]:
+            yield _sse_event("task_step", step)
+        if result["model_action"]["action"] == "directional_guidance":
+            yield _sse_event(
+                "directional_guidance",
+                {
+                    "assistant_message": result["assistant_message"],
+                    "readiness": result["readiness"],
+                },
+            )
+        if persisted_recommendation:
+            for item in persisted_recommendation["items"]:
+                yield _sse_event("recommendation_delta", item)
+        yield _sse_event(
+            "final_message",
+            {
+                "thread_id": thread_id,
+                "state": result["state"],
+                "assistant_message": result["assistant_message"],
+                "dossier": result["dossier"],
+                "readiness": result["readiness"],
+                "pending_recommendation_confirmation": result["pending_recommendation_confirmation"],
+                "field_provenance": result["field_provenance"],
+                "recommendation": persisted_recommendation,
+                "recommendation_versions": result["recommendation_versions"],
+                "task_timeline": result["task_timeline"],
+                "model_action": result["model_action"],
+            },
+        )
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @app.post("/api/recommendation/run")
@@ -204,3 +288,7 @@ def export_family_summary(request: RecommendationRequest) -> ExportSummaryRespon
 def create_feedback(payload: FeedbackRequest) -> dict:
     feedback = feedback_repo.create(thread_id=payload.thread_id, rating=payload.rating, comment=payload.comment)
     return {"id": feedback.id, "thread_id": feedback.thread_id, "rating": feedback.rating}
+
+
+def _sse_event(event: str, payload: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"

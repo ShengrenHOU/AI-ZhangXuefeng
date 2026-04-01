@@ -15,6 +15,8 @@ class SessionRepository:
         field_provenance: dict | None = None,
         recommendation: dict | None = None,
         recommendation_fingerprint: str | None = None,
+        recommendation_versions: list | None = None,
+        task_timeline: list | None = None,
     ) -> SessionStateModel:
         with session_scope() as session:
             model = SessionStateModel(
@@ -26,6 +28,8 @@ class SessionRepository:
                 field_provenance=field_provenance or {},
                 recommendation=recommendation,
                 recommendation_fingerprint=recommendation_fingerprint,
+                recommendation_versions=recommendation_versions or [],
+                task_timeline=task_timeline or [],
             )
             session.add(model)
             session.flush()
@@ -46,6 +50,8 @@ class SessionRepository:
         field_provenance: dict | None = None,
         recommendation: dict | None = None,
         recommendation_fingerprint: str | None = None,
+        recommendation_versions: list | None = None,
+        task_timeline: list | None = None,
     ) -> SessionStateModel | None:
         with session_scope() as session:
             model = session.get(SessionStateModel, thread_id)
@@ -62,6 +68,10 @@ class SessionRepository:
                 model.recommendation = recommendation
             if recommendation_fingerprint is not None:
                 model.recommendation_fingerprint = recommendation_fingerprint
+            if recommendation_versions is not None:
+                model.recommendation_versions = recommendation_versions
+            if task_timeline is not None:
+                model.task_timeline = task_timeline
             session.add(model)
             session.flush()
             session.refresh(model)

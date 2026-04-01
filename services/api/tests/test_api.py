@@ -34,9 +34,9 @@ def test_session_flow_and_dossier_endpoint() -> None:
     assert message.status_code == 200
     payload = message.json()
     assert payload["thread_id"] == thread_id
-    assert payload["recommendation"] is None
+    assert payload["recommendation"] is not None
     assert payload["readiness"]["can_recommend"] is True
-    assert payload["pending_recommendation_confirmation"] is True
+    assert payload["pending_recommendation_confirmation"] is False
     assert payload["field_provenance"]
 
     confirm = client.post(
@@ -47,6 +47,8 @@ def test_session_flow_and_dossier_endpoint() -> None:
     confirm_payload = confirm.json()
     assert confirm_payload["recommendation"] is not None
     assert confirm_payload["pending_recommendation_confirmation"] is False
+    assert confirm_payload["recommendation_versions"]
+    assert confirm_payload["task_timeline"]
 
     dossier = client.get(f"/api/session/{thread_id}/dossier")
     assert dossier.status_code == 200
@@ -59,6 +61,8 @@ def test_session_flow_and_dossier_endpoint() -> None:
     assert snapshot.json()["readiness"]["level"] == "ready_for_recommendation"
     assert snapshot.json()["field_provenance"]
     assert snapshot.json()["recommendation"] is not None
+    assert snapshot.json()["recommendation_versions"]
+    assert snapshot.json()["task_timeline"]
 
 
 def test_healthcheck() -> None:
@@ -85,3 +89,17 @@ def test_conflict_message_does_not_recommend() -> None:
     assert payload["state"] == "constraint_confirmation"
     assert payload["recommendation"] is None
     assert payload["readiness"]["conflicts"]
+
+
+def test_stream_endpoint_returns_task_steps_and_final_message() -> None:
+    start = client.post("/api/session/start")
+    thread_id = start.json()["thread_id"]
+    response = client.post(
+        f"/api/session/{thread_id}/stream",
+        json={"content": "我是河南考生，位次65000，物化生，想学计算机，预算6500，帮我先给方向，如果合适再正式推荐。"},
+    )
+    assert response.status_code == 200
+    body = response.text
+    assert "event: status" in body
+    assert "event: task_step" in body
+    assert "event: final_message" in body

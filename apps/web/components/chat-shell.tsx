@@ -4,9 +4,22 @@ import { useEffect, useMemo, useState } from "react";
 
 import type { ReadinessLevel, RecommendationBucket, RecommendationItem } from "@gaokao-mvp/types";
 
-import { getSession, sendMessage, startSession, type ChatResult, type SessionSnapshot, type UiDossier, type UiReadiness, type UiRecommendationRun } from "../lib/api";
+import {
+  getSession,
+  sendMessage,
+  sendStreamMessage,
+  startSession,
+  type ChatResult,
+  type SessionSnapshot,
+  type StreamEvent,
+  type UiDossier,
+  type UiReadiness,
+  type UiRecommendationRun,
+  type UiRecommendationVersion,
+  type UiTaskStep,
+} from "../lib/api";
 
-const THREAD_STORAGE_KEY = "gaokao-mvp-thread-id";
+const THREAD_STORAGE_KEY = "gaokao-mvp-thread-id:v4";
 const INITIAL_DRAFT = "我是河南考生，家里条件一般，想稳一点，最好离家近些，比较倾向电气或计算机。";
 const MINIMUM_KEYS = [
   "province",
@@ -84,10 +97,10 @@ function readinessHeadline(readiness: UiReadiness, pendingRecommendationConfirma
     return "我先帮你把冲突条件理顺，再继续推荐。";
   }
   if (readiness.level === "near_ready") {
-    return "已经接近能推荐了，再补一两项关键条件会更稳。";
+    return "已经接近能推荐了，我会先给方向，再继续把关键条件补全。";
   }
   if (readiness.level === "ready_for_recommendation") {
-    return "你的核心条件已经比较完整，我会先请你确认一遍再正式推荐。";
+    return "你的核心条件已经比较完整，可以开始正式推荐了。";
   }
   return "先把学生情况和家庭约束聊清楚，再开始正式推荐。";
 }
@@ -142,20 +155,33 @@ function buildConfirmedChips(dossier: UiDossier | null, readiness: UiReadiness) 
 }
 
 function loadingCopy(params: {
+  outgoing?: string;
   hasRecommendation: boolean;
   pendingRecommendationConfirmation: boolean;
   readiness: UiReadiness;
 }) {
-  if (params.hasRecommendation) {
-    return {
-      title: "正在根据新条件重排建议",
-      body: "我会先复用已确认档案，再决定哪些建议应该保留、替换或下调风险。",
-    };
-  }
-  if (params.pendingRecommendationConfirmation || params.readiness.level === "ready_for_recommendation") {
+  const outgoing = (params.outgoing ?? "").trim().toLowerCase();
+  const looksLikeRecommendationConfirmation =
+    params.pendingRecommendationConfirmation &&
+    (outgoing.includes("可以") ||
+      outgoing.includes("是的") ||
+      outgoing.includes("开始推荐") ||
+      outgoing.includes("推荐即可") ||
+      outgoing.includes("按照这些条件") ||
+      outgoing.includes("就按这些条件") ||
+      outgoing.includes("ok") ||
+      outgoing.includes("yes"));
+
+  if (looksLikeRecommendationConfirmation) {
     return {
       title: "正在检索已发布知识并生成建议",
       body: "这一阶段会比普通追问慢一些，因为我会先读知识，再组织正式推荐。",
+    };
+  }
+  if (params.hasRecommendation && (outgoing.includes("对比") || outgoing.includes("比较") || outgoing.includes("为什么") || outgoing.includes("详细") || outgoing.includes("展开"))) {
+    return {
+      title: "正在做更深入的分析",
+      body: "我会结合你当前 shortlist，把差异和取舍讲得更清楚。",
     };
   }
   return {
@@ -224,7 +250,7 @@ function FollowUpCard({ readiness, nextQuestion }: { readiness: UiReadiness; nex
   );
 }
 
-function RecommendationSummaryBar({ items }: { items: RecommendationItem[] }) {
+function RecommendationSummaryBar({ items, versions }: { items: RecommendationItem[]; versions: UiRecommendationVersion[] }) {
   return (
     <section className="recommendation-overview panel">
       <div className="recommendation-overview-head">
@@ -232,6 +258,15 @@ function RecommendationSummaryBar({ items }: { items: RecommendationItem[] }) {
           <div className="assistant-name">当前 shortlist</div>
           <p className="section-desc">推荐已经生成了。后面你继续补条件，我会在原地帮你重排。</p>
         </div>
+        {versions.length > 0 ? (
+          <div className="chip-row">
+            {versions.map((version) => (
+              <span className="chip neutral" key={version.traceId}>
+                {version.label}
+              </span>
+            ))}
+          </div>
+        ) : null}
       </div>
       <div className="overview-row">
         {items.slice(0, 3).map((item) => (
@@ -254,6 +289,9 @@ export function ChatShell() {
   const [messages, setMessages] = useState<{ role: string; content: string }[]>([]);
   const [draft, setDraft] = useState(INITIAL_DRAFT);
   const [recommendation, setRecommendation] = useState<UiRecommendationRun | null>(null);
+  const [recommendationVersions, setRecommendationVersions] = useState<UiRecommendationVersion[]>([]);
+  const [taskTimeline, setTaskTimeline] = useState<UiTaskStep[]>([]);
+  const [streamedItems, setStreamedItems] = useState<RecommendationItem[]>([]);
   const [readiness, setReadiness] = useState<UiReadiness | null>(null);
   const [reasoningSummary, setReasoningSummary] = useState<string>("我会先通过多轮对话把关键信息补完整，再开始正式推荐。");
   const [lastAction, setLastAction] = useState<string>("ask_followup");
@@ -261,6 +299,7 @@ export function ChatShell() {
   const [pendingRecommendationConfirmation, setPendingRecommendationConfirmation] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
+  const [loadingInput, setLoadingInput] = useState<string>("");
 
   useEffect(() => {
     let disposed = false;
@@ -289,6 +328,8 @@ export function ChatShell() {
         setReadiness(session.readiness);
         setPendingRecommendationConfirmation(session.pendingRecommendationConfirmation);
         setRecommendation(session.recommendation);
+        setRecommendationVersions(session.recommendationVersions);
+        setTaskTimeline(session.taskTimeline);
       } catch (sessionError) {
         if (!disposed) {
           setError(sessionError instanceof Error ? sessionError.message : "会话初始化失败");
@@ -307,29 +348,62 @@ export function ChatShell() {
       return;
     }
     setLoading(true);
+    setLoadingInput(outgoing);
     setError(null);
+    setStreamedItems([]);
     setMessages((current) => [...current, { role: "user", content: outgoing }]);
     setDraft("");
+
     try {
-      const result: ChatResult = await sendMessage(threadId, outgoing);
-      setDossier(result.dossier);
-      setReadiness(result.readiness);
-      setReasoningSummary(result.modelAction.reasoningSummary);
-      setLastAction(result.modelAction.action);
-      setLastNextQuestion(result.modelAction.nextQuestion ?? null);
-      setPendingRecommendationConfirmation(result.pendingRecommendationConfirmation);
-      setMessages((current) => [...current, { role: "assistant", content: result.assistantMessage }]);
-      setRecommendation(result.recommendation ?? recommendation);
-    } catch (sendError) {
-      setMessages((current) => current.slice(0, -1));
-      setDraft(outgoing);
-      setError(sendError instanceof Error ? sendError.message : "发送消息失败");
+      await sendStreamMessage(threadId, outgoing, (event: StreamEvent) => {
+        if (event.event === "task_step") {
+          setTaskTimeline((current) => [...current.filter((step) => step.step !== event.data.step), event.data]);
+          return;
+        }
+        if (event.event === "recommendation_delta") {
+          const item = event.data as RecommendationItem;
+          setStreamedItems((current) => [...current, item]);
+          return;
+        }
+        if (event.event === "final_message") {
+          const payload = event.data;
+          setDossier(payload.dossier);
+          setReadiness(payload.readiness);
+          setReasoningSummary(payload.model_action.reasoningSummary);
+          setLastAction(payload.model_action.action);
+          setLastNextQuestion(payload.model_action.nextQuestion ?? null);
+          setPendingRecommendationConfirmation(payload.pending_recommendation_confirmation);
+          setMessages((current) => [...current, { role: "assistant", content: payload.assistant_message }]);
+          setRecommendation(payload.recommendation);
+          setRecommendationVersions(payload.recommendation_versions ?? []);
+          setTaskTimeline(payload.task_timeline ?? []);
+        }
+      });
+    } catch {
+      try {
+        const result: ChatResult = await sendMessage(threadId, outgoing);
+        setDossier(result.dossier);
+        setReadiness(result.readiness);
+        setReasoningSummary(result.modelAction.reasoningSummary);
+        setLastAction(result.modelAction.action);
+        setLastNextQuestion(result.modelAction.nextQuestion ?? null);
+        setPendingRecommendationConfirmation(result.pendingRecommendationConfirmation);
+        setMessages((current) => [...current, { role: "assistant", content: result.assistantMessage }]);
+        setRecommendation(result.recommendation);
+        setRecommendationVersions(result.recommendationVersions);
+        setTaskTimeline(result.taskTimeline);
+      } catch (sendError) {
+        setMessages((current) => current.slice(0, -1));
+        setDraft(outgoing);
+        setError(sendError instanceof Error ? sendError.message : "发送消息失败");
+      }
     } finally {
       setLoading(false);
+      setLoadingInput("");
     }
   }
 
-  const items = recommendation?.items ?? [];
+  const items = streamedItems.length > 0 ? streamedItems : recommendation?.items ?? [];
   const readinessView = readiness ?? {
     level: "insufficient_info" as ReadinessLevel,
     canRecommend: false,
@@ -339,6 +413,7 @@ export function ChatShell() {
   };
   const hasConversation = messages.length > 0;
   const loadingStatus = loadingCopy({
+    outgoing: loadingInput,
     hasRecommendation: items.length > 0,
     pendingRecommendationConfirmation,
     readiness: readinessView,
@@ -390,7 +465,7 @@ export function ChatShell() {
         </div>
         {error ? <p className="error-text">{error}</p> : null}
 
-        {items.length > 0 ? <RecommendationSummaryBar items={items} /> : null}
+        {items.length > 0 ? <RecommendationSummaryBar items={items} versions={recommendationVersions} /> : null}
 
         <div className="chat-list">
           {messages.length === 0 ? (
@@ -408,9 +483,9 @@ export function ChatShell() {
                 <div className="message-role">{THREAD_LABELS[message.role as "assistant" | "user"]}</div>
                 {!shouldCollapseIntoCard ? <div className="message-content">{message.content}</div> : null}
                 {isLastAssistant && lastAction === "ask_followup" ? <FollowUpCard readiness={readinessView} nextQuestion={lastNextQuestion} /> : null}
-                {isLastAssistant && items.length > 0 && lastAction === "explain_results" ? (
+                {isLastAssistant && items.length > 0 && (lastAction === "explain_results" || lastAction === "compare_options") ? (
                   <div className="inline-results">
-                    <div className="assistant-card-title">当前建议</div>
+                    <div className="assistant-card-title">{lastAction === "compare_options" ? "比较结果" : "当前建议"}</div>
                     <div className="inline-bucket-summary">
                       {(["reach", "match", "safe"] as RecommendationBucket[]).map((bucket) => (
                         <span className={`bucket-summary ${bucket}`} key={bucket}>
@@ -477,6 +552,16 @@ export function ChatShell() {
               {chip}
             </span>
           ))}
+        </div>
+
+        <div className="summary-section">
+          <label>当前工作轨迹</label>
+          <div className="shortcut-links">
+            {taskTimeline.length === 0 ? <span>你一开口，我就会在这里显示当前正在做什么。</span> : null}
+            {taskTimeline.map((step) => (
+              <span key={`${step.step}-${step.label}`}>{step.label}</span>
+            ))}
+          </div>
         </div>
       </section>
     </div>
