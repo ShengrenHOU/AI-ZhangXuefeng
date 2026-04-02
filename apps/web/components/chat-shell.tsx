@@ -234,46 +234,6 @@ function ResultCard({ item }: { item: RecommendationItem }) {
   );
 }
 
-function RecommendationSummaryBar({ items, versions }: { items: RecommendationItem[]; versions: UiRecommendationVersion[] }) {
-  const currentVersion = versions[0] ?? null;
-  const previousVersion = versions[1] ?? null;
-  return (
-    <section className="recommendation-overview panel">
-      <div className="recommendation-overview-head">
-        <div>
-          <div className="assistant-name">当前建议</div>
-          <p className="section-desc">
-            {previousVersion ? "这版建议已经按你最新补充的条件重排了。" : "推荐已经生成了。后面你继续补条件，我会在原地帮你重排。"}
-          </p>
-        </div>
-        {versions.length > 0 ? (
-          <div className="chip-row">
-            {currentVersion ? <span className="chip neutral">当前版本</span> : null}
-            {previousVersion ? <span className="chip neutral">上一版本</span> : null}
-          </div>
-        ) : null}
-      </div>
-      {currentVersion ? (
-        <div className="chip-row" style={{ marginBottom: 12 }}>
-          <span className="chip neutral">当前 {currentVersion.itemCount} 项</span>
-          {previousVersion ? <span className="chip neutral">上一版 {previousVersion.itemCount} 项</span> : null}
-        </div>
-      ) : null}
-      <div className="overview-row">
-        {items.slice(0, 3).map((item) => (
-          <div className="overview-pill" key={item.programId}>
-            <span className={`bucket ${item.bucket}`}>{BUCKET_LABELS[item.bucket]}</span>
-            <div>
-              <strong>{item.schoolName}</strong>
-              <span>{item.programName}</span>
-            </div>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
 function SuggestionRail({
   items,
   versions,
@@ -542,7 +502,7 @@ export function ChatShell() {
         </div>
         {error ? <p className="error-text">{error}</p> : null}
 
-        {items.length > 0 ? <RecommendationSummaryBar items={items} versions={recommendationVersions} /> : null}
+        {null}
 
         <div className="chat-list">
           {messages.length === 0 ? (
@@ -554,7 +514,6 @@ export function ChatShell() {
 
           {messages.map((message, index) => {
             const isLastAssistant = message.role === "assistant" && index === messages.length - 1;
-            const shouldCollapseIntoCard = isLastAssistant && lastAction === "ask_followup" && Boolean(lastNextQuestion);
             return (
               <div className={`message ${message.role}`} key={`${message.role}-${index}-${message.content}`}>
                 <div className="message-role">{THREAD_LABELS[message.role as "assistant" | "user"]}</div>
