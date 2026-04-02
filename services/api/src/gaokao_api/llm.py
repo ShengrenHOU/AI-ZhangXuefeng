@@ -298,7 +298,7 @@ class ArkCodingPlanClient:
         fallback_web_results: list[dict[str, Any]],
     ) -> CandidateDiscoveryResult:
         if self._client is None or not settings.enable_web_retrieval:
-            return CandidateDiscoveryResult()
+            return CandidateDiscoveryResult(reasoning_summary="web discovery disabled", candidates=[])
 
         native = self._discover_candidates_via_native_web_search(
             thread_id=thread_id,
@@ -309,7 +309,7 @@ class ArkCodingPlanClient:
         if native and native.candidates:
             return native
         if not fallback_web_results:
-            return CandidateDiscoveryResult()
+            return CandidateDiscoveryResult(reasoning_summary="no fallback web results", candidates=[])
         return self._discover_candidates_via_fallback_web_context(
             thread_id=thread_id,
             dossier=dossier,
@@ -535,7 +535,33 @@ class ArkCodingPlanClient:
         result = self._json_chat(messages, SafetyStyleGuardResult, model=self.instant_model, max_tokens=220, temperature=0.1)
         if not result or result.approved or not result.revision_notes:
             return draft_output
-        return draft_output
+        rewrite = self._chat_text(
+            model=self.instant_model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "你是高考志愿助手的语言润色层。请只改写语言风格，不改变事实、结论和条件，"
+                        "不要保证录取，不要暴露工程字段，要用平等、克制、面向中国家庭的表达。"
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "draft_output": draft_output,
+                            "revision_notes": result.revision_notes,
+                            "model_action": model_action,
+                            "user_context": user_context,
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            ],
+            max_completion_tokens=420,
+            temperature=0.15,
+        )
+        return rewrite.strip() if rewrite else draft_output
 
     def _discover_candidates_via_native_web_search(
         self,
@@ -558,7 +584,7 @@ class ArkCodingPlanClient:
                                 "type": "input_text",
                                 "text": (
                                     "你是高考志愿助手的候选发现层。请使用 web search 寻找与用户条件相关的学校和专业候选。"
-                                    "最后只输出 JSON，对象键为 candidates。"
+                                    "最后只输出 JSON，对象键为 reasoning_summary 和 candidates。"
                                 ),
                             }
                         ],
@@ -605,12 +631,12 @@ class ArkCodingPlanClient:
         messages = [
             {
                 "role": "system",
-                "content": (
-                    "你是高考志愿助手的开放检索候选发现层。"
-                    "请根据 dossier、已发布知识摘要和网页检索结果，抽取值得进入 recommendation 的候选。"
-                    "只输出 JSON，对象键为 candidates。"
-                ),
-            },
+                    "content": (
+                        "你是高考志愿助手的开放检索候选发现层。"
+                        "请根据 dossier、已发布知识摘要和网页检索结果，抽取值得进入 recommendation 的候选。"
+                        "只输出 JSON，对象键为 reasoning_summary 和 candidates。"
+                    ),
+                },
             {
                 "role": "user",
                 "content": json.dumps(

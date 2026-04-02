@@ -193,8 +193,6 @@ def stream_message(thread_id: str, payload: ChatMessageRequest) -> StreamingResp
     }
 
     def event_stream():
-        yield _sse_event("status", {"message": "正在理解你的意图"})
-
         queue: Queue[tuple[str, dict[str, object]] | tuple[str, dict[str, object], dict | None]] = Queue()
 
         def emit(event: str, payload: dict[str, object]) -> None:
@@ -217,7 +215,9 @@ def stream_message(thread_id: str, payload: ChatMessageRequest) -> StreamingResp
             )
             queue.put(("__done__", result, persisted_recommendation))
 
-        Thread(target=worker, daemon=True).start()
+        Thread(target=worker).start()
+
+        yield _sse_event("status", {"message": "正在理解你的意图"})
 
         result = None
         persisted_recommendation = None
