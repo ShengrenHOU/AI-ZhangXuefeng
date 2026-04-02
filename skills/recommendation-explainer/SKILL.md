@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Translate recommendation outputs into family-readable language without flattening risk or inventing unsupported certainty.
+Translate model-led recommendation outputs into family-readable language without flattening risk or inventing unsupported certainty.
 
 ## When To Use
 
@@ -27,10 +27,10 @@ Translate recommendation outputs into family-readable language without flattenin
 - clear fit reasons
 - clear risk warnings
 - plain-language summary for family discussion
-- source-aware wording
+- source-aware wording without surfacing engineering trace by default
 
 ## Hard Constraints
 
 - do not rewrite risk away
 - do not convert probabilistic guidance into certainty language
-- do not expose internal source IDs or trace fields in default UI language
+- do not expose internal source IDs, trace fields, or engineering-only workflow details in default UI language

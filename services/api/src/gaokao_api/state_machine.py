@@ -224,6 +224,9 @@ class SessionStateMachine:
             pending_recommendation_confirmation = False
             next_question = "好，我们先不沿用这版建议。你最想先改哪一项条件，或者你最想重新考虑哪个方向？"
             assistant_message = next_question
+            cached_recommendation = None
+            cached_recommendation_fingerprint = None
+            recommendation_versions = []
         elif pending_recommendation_confirmation and readiness["can_recommend"] and self._is_affirmation(content):
             if self._has_confirmation_relevant_change(original_dossier, dossier):
                 action = "confirm_constraints"
@@ -287,13 +290,37 @@ class SessionStateMachine:
                     label="当前版本",
                 )
             task_timeline.append(self._task_step("recommend", "completed", "正在生成正式建议"))
-        elif readiness["can_recommend"]:
+        elif readiness["can_recommend"] and self._should_confirm_before_recommendation(content):
             action = "confirm_constraints"
             state_name = "constraint_confirmation"
             pending_recommendation_confirmation = True
             next_question = self._build_confirmation_prompt(dossier)
             assistant_message = next_question
             task_timeline.append(self._task_step("reflect", "completed", "正在确认最新条件"))
+        elif readiness["can_recommend"]:
+            recommendation_fingerprint = self._recommendation_fingerprint(dossier)
+            if cached_recommendation and cached_recommendation_fingerprint == recommendation_fingerprint:
+                recommendation = cached_recommendation
+                recommendation_summary = "我先沿用当前这版建议；如果你继续补条件，我会立即帮你重排。"
+            else:
+                recommendation, recommendation_summary, context_slice = self._run_recommendation(state["thread_id"], dossier, content)
+                task_timeline.extend(self._context_task_steps(context_slice))
+            action = (
+                "refine_recommendation"
+                if cached_recommendation and cached_recommendation_fingerprint != recommendation_fingerprint
+                else "recommend"
+            )
+            state_name = "result_explanation"
+            pending_recommendation_confirmation = False
+            assistant_message = recommendation_summary
+            reasoning_summary_override = recommendation_summary
+            if recommendation is not None:
+                recommendation_versions = self._append_recommendation_version(
+                    recommendation_versions,
+                    recommendation,
+                    label="当前版本",
+                )
+            task_timeline.append(self._task_step("recommend", "completed", "正在生成正式建议"))
         elif self._should_offer_directional_guidance(
             content=content,
             planner_suggested_action=planner_suggested_action,
@@ -366,7 +393,7 @@ class SessionStateMachine:
             missing.append("subject_combination")
         if not dossier.major_interests:
             missing.append("major_interests")
-        if dossier.family_constraints.annual_budget_cny is None:
+        if not self._has_budget_context(dossier):
             missing.append("budget")
         if not self._has_decision_anchor(dossier):
             missing.append("decision_anchor")
@@ -741,7 +768,7 @@ class SessionStateMachine:
             f"年份：{dossier.target_year or '待确认'}",
             f"选科：{self._join_labels(dossier.subject_combination or [], subject_mode=True) or '待确认'}",
             f"专业兴趣：{self._join_labels(dossier.major_interests or [], major_mode=True) or '待确认'}",
-            f"预算：{str(dossier.family_constraints.annual_budget_cny) + ' 元/年' if dossier.family_constraints.annual_budget_cny else '待确认'}",
+            f"预算：{self._budget_label(dossier)}",
         ]
         if dossier.rank is not None:
             fields.insert(2, f"位次：{dossier.rank}")
@@ -761,11 +788,24 @@ class SessionStateMachine:
     def _has_preference_or_constraint(self, dossier: StudentDossier) -> bool:
         return bool(
             dossier.major_interests
-            or dossier.family_constraints.annual_budget_cny is not None
+            or self._has_budget_context(dossier)
             or dossier.family_constraints.city_preference
             or dossier.family_constraints.adjustment_accepted is not None
             or dossier.risk_appetite is not None
         )
+
+    def _has_budget_context(self, dossier: StudentDossier) -> bool:
+        if dossier.family_constraints.annual_budget_cny is not None:
+            return True
+        notes = dossier.family_constraints.notes or []
+        return any(note == "budget unconstrained" for note in notes)
+
+    def _budget_label(self, dossier: StudentDossier) -> str:
+        if dossier.family_constraints.annual_budget_cny is not None:
+            return f"{dossier.family_constraints.annual_budget_cny} 元/年"
+        if self._has_budget_context(dossier):
+            return "学费不是主要约束"
+        return "待确认"
 
     def _has_decision_anchor(self, dossier: StudentDossier) -> bool:
         return bool(
@@ -870,6 +910,9 @@ class SessionStateMachine:
             return True
         return self._looks_like_recommendation_request(content)
 
+    def _should_confirm_before_recommendation(self, content: str) -> bool:
+        return any(marker in content for marker in ["先确认", "确认一下", "先跟我确认", "先复述一遍"])
+
     def _fallback_followup_prompt(self, field_name: str) -> str:
         label = MISSING_FIELD_LABELS.get(field_name, field_name)
         if field_name == "rank_or_score":
@@ -879,7 +922,7 @@ class SessionStateMachine:
         if field_name == "major_interests":
             return "现在最影响我继续判断的是专业兴趣。你先说一两个最偏向的方向，我会比机械追问更快给你建议。"
         if field_name == "budget":
-            return "现在最影响排序的是学费预算。你给我一个大致能接受的区间，我就能把候选收得更稳。"
+            return "现在最影响排序的是学费预算。如果学费不是主要约束，你也可以直接告诉我“预算不是问题”。"
         if field_name == "decision_anchor":
             return "现在最影响最终排序的是你的家庭决策偏好。你更看重离家近、城市本身、接受调剂，还是整体偏稳或偏冲？"
         return f"现在最影响我继续判断的是{label}，你先告诉我这项，我就能把建议再收一层。"
@@ -1236,6 +1279,25 @@ class SessionStateMachine:
         if budget_match:
             constraints.annual_budget_cny = int(budget_match.group(2))
             provenance["family_constraints.annual_budget_cny"] = "deterministic_regex"
+        if constraints.annual_budget_cny is None and any(
+            token in content
+            for token in [
+                "没有预算",
+                "预算不是问题",
+                "学费不是问题",
+                "学费没有预算",
+                "预算没限制",
+                "预算不限",
+                "家庭条件还好",
+                "家里条件还好",
+                "家庭条件还可以",
+                "家里条件还可以",
+                "家里条件不错",
+                "家庭条件不错",
+            ]
+        ):
+            constraints.notes.append("budget unconstrained")
+            provenance["family_constraints.notes"] = "deterministic_keyword_match"
         if constraints.annual_budget_cny is None and any(token in content for token in ["家里条件一般", "普通家庭", "预算很低", "预算不高", "学费预算很低"]):
             constraints.notes.append("family mentioned budget sensitivity")
             constraints.annual_budget_cny = 6000

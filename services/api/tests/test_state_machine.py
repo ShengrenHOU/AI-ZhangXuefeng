@@ -69,10 +69,10 @@ def test_state_machine_returns_recommendation_when_dossier_is_complete() -> None
         state,
         "河南，位次: 70000，physics chemistry biology，预算: 6000，想学电气，稳一点，不接受调剂，离家近。",
     )
-    assert result["state"] == "constraint_confirmation"
+    assert result["state"] == "result_explanation"
     assert result["readiness"]["level"] == "ready_for_recommendation"
-    assert result["pending_recommendation_confirmation"] is True
-    assert result["recommendation"] is None
+    assert result["pending_recommendation_confirmation"] is False
+    assert result["recommendation"] is not None
 
 
 def test_state_machine_recommends_only_after_affirmation() -> None:
@@ -80,7 +80,7 @@ def test_state_machine_recommends_only_after_affirmation() -> None:
     state = machine.initialize()
     first = machine.handle_message(
         state,
-        "河南，位次: 70000，physics chemistry biology，预算: 6000，想学电气，稳一点，不接受调剂，离家近。",
+        "河南，位次: 70000，physics chemistry biology，预算: 6000，想学电气，稳一点，不接受调剂，离家近，先确认一下再推荐。",
     )
     assert first["state"] == "constraint_confirmation"
     assert first["pending_recommendation_confirmation"] is True
@@ -99,7 +99,7 @@ def test_state_machine_accepts_natural_chinese_confirmation() -> None:
     state = machine.initialize()
     first = machine.handle_message(
         state,
-        "河南，位次: 70000，physics chemistry biology，预算: 6000，想学电气，稳一点，不接受调剂，离家近。",
+        "河南，位次: 70000，physics chemistry biology，预算: 6000，想学电气，稳一点，不接受调剂，离家近，先确认一下再推荐。",
     )
     assert first["state"] == "constraint_confirmation"
     second = machine.handle_message(state, "是的，就按照这些条件推荐即可。")
@@ -173,7 +173,7 @@ def test_state_machine_preserves_confirmation_but_allows_negative_reply() -> Non
     state = machine.initialize()
     first = machine.handle_message(
         state,
-        "河南，位次: 65000，选科是物化生，预算: 6500，想学计算机，接受调剂。",
+        "河南，位次: 65000，选科是物化生，预算: 6500，想学计算机，接受调剂，先确认一下再推荐。",
     )
     assert first["state"] == "constraint_confirmation"
     second = machine.handle_message(state, "我还想改一下条件，先别正式推荐。")
@@ -187,7 +187,7 @@ def test_state_machine_does_not_misread_negative_reply_as_affirmation() -> None:
     state = machine.initialize()
     machine.handle_message(
         state,
-        "河南，位次: 65000，选科是物化生，预算: 6500，想学计算机，接受调剂。",
+        "河南，位次: 65000，选科是物化生，预算: 6500，想学计算机，接受调剂，先确认一下再推荐。",
     )
     second = machine.handle_message(state, "不可以，先别正式推荐，我还想再改一下条件。")
     assert second["state"] == "follow_up_questioning"
@@ -200,7 +200,7 @@ def test_state_machine_reconfirms_when_user_changes_condition_during_confirmatio
     state = machine.initialize()
     machine.handle_message(
         state,
-        "河南，位次: 65000，选科是物化生，预算: 6500，想学计算机，接受调剂。",
+        "河南，位次: 65000，选科是物化生，预算: 6500，想学计算机，接受调剂，先确认一下再推荐。",
     )
     second = machine.handle_message(state, "可以，不过预算改成8000再推荐。")
     assert second["state"] == "constraint_confirmation"
@@ -260,6 +260,18 @@ def test_state_machine_extracts_rank_score_budget_and_out_of_province_intent_fro
     assert result["dossier"]["subject_combination"] == ["biology", "physics"]
     assert result["dossier"]["major_interests"] == ["computer_science"]
     assert "rank_or_score" not in result["readiness"]["missing_fields"]
+
+
+def test_state_machine_treats_no_budget_constraint_as_answered_budget() -> None:
+    machine = make_machine()
+    state = machine.initialize()
+    machine.handle_message(state, "河南，分数640，位次3000，物化生，想学计算机，想出省。")
+    result = machine.handle_message(state, "学费没有预算，我家庭条件还好")
+
+    assert "budget" not in result["readiness"]["missing_fields"]
+    notes = result["dossier"]["family_constraints"]["notes"]
+    assert "budget unconstrained" in notes
+    assert "学费预算" not in result["assistant_message"]
 
 
 def test_state_machine_gives_directional_guidance_for_multi_intent_question() -> None:

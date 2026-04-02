@@ -35,21 +35,10 @@ def test_session_flow_and_dossier_endpoint() -> None:
     assert message.status_code == 200
     payload = message.json()
     assert payload["thread_id"] == thread_id
-    assert payload["recommendation"] is None
+    assert payload["recommendation"] is not None
     assert payload["readiness"]["can_recommend"] is True
-    assert payload["pending_recommendation_confirmation"] is True
+    assert payload["pending_recommendation_confirmation"] is False
     assert payload["field_provenance"]
-
-    confirm = client.post(
-        f"/api/session/{thread_id}/message",
-        json={"content": "可以，就按这些条件开始推荐。"},
-    )
-    assert confirm.status_code == 200
-    confirm_payload = confirm.json()
-    assert confirm_payload["recommendation"] is not None
-    assert confirm_payload["pending_recommendation_confirmation"] is False
-    assert confirm_payload["recommendation_versions"]
-    assert confirm_payload["task_timeline"]
 
     dossier = client.get(f"/api/session/{thread_id}/dossier")
     assert dossier.status_code == 200
@@ -58,7 +47,7 @@ def test_session_flow_and_dossier_endpoint() -> None:
     snapshot = client.get(f"/api/session/{thread_id}")
     assert snapshot.status_code == 200
     assert snapshot.json()["thread_id"] == thread_id
-    assert len(snapshot.json()["messages"]) >= 4
+    assert len(snapshot.json()["messages"]) >= 2
     assert snapshot.json()["readiness"]["level"] == "ready_for_recommendation"
     assert snapshot.json()["field_provenance"]
     assert snapshot.json()["recommendation"] is not None

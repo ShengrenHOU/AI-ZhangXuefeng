@@ -109,13 +109,14 @@ function completenessSummary(dossier: UiDossier | null) {
   if (!dossier) {
     return `0/${MINIMUM_KEYS.length} 项核心条件已到位`;
   }
+  const budgetUnconstrained = dossier.familyConstraints?.notes?.includes("budget unconstrained");
   const complete = MINIMUM_KEYS.filter((key) => {
     if (key === "province") return Boolean(dossier.province);
     if (key === "target_year") return Boolean(dossier.targetYear);
     if (key === "rank_or_score") return dossier.rank != null || dossier.score != null;
     if (key === "subject_combination") return Boolean(dossier.subjectCombination?.length);
     if (key === "major_interests") return Boolean(dossier.majorInterests?.length);
-    if (key === "budget") return dossier.familyConstraints?.annualBudgetCny != null;
+    if (key === "budget") return dossier.familyConstraints?.annualBudgetCny != null || budgetUnconstrained;
     if (key === "decision_anchor") {
       return Boolean(
         dossier.familyConstraints?.distancePreference ||
@@ -142,6 +143,7 @@ function buildConfirmedChips(dossier: UiDossier | null, readiness: UiReadiness) 
   if (dossier.subjectCombination?.length) chips.push(`选科：${dossier.subjectCombination.map(subjectLabel).join("、")}`);
   if (dossier.majorInterests?.length) chips.push(`倾向：${dossier.majorInterests.map(interestLabel).join("、")}`);
   if (dossier.familyConstraints?.annualBudgetCny != null) chips.push(`预算：${dossier.familyConstraints.annualBudgetCny} 元/年`);
+  else if (dossier.familyConstraints?.notes?.includes("budget unconstrained")) chips.push("预算：学费不是主要约束");
   if (dossier.familyConstraints?.distancePreference === "near_home") chips.push("希望离家近");
   if (dossier.familyConstraints?.distancePreference === "nationwide") chips.push("全国都可");
   if (dossier.familyConstraints?.adjustmentAccepted === true) chips.push("接受调剂");
@@ -229,24 +231,6 @@ function ResultCard({ item }: { item: RecommendationItem }) {
         </div>
       </div>
     </article>
-  );
-}
-
-function FollowUpCard({ readiness, nextQuestion }: { readiness: UiReadiness; nextQuestion?: string | null }) {
-  return (
-    <div className="assistant-card followup-card">
-      <div className="assistant-card-title">还需要继续确认</div>
-      <p>{nextQuestion ?? "我还需要补几项信息，才能开始正式推荐。"}</p>
-      {readiness.missingLabels.length > 0 ? (
-        <div className="chip-row" style={{ marginTop: 12 }}>
-          {readiness.missingLabels.map((label) => (
-            <span className="chip neutral" key={label}>
-              待补充：{label}
-            </span>
-          ))}
-        </div>
-      ) : null}
-    </div>
   );
 }
 
@@ -574,11 +558,10 @@ export function ChatShell() {
             return (
               <div className={`message ${message.role}`} key={`${message.role}-${index}-${message.content}`}>
                 <div className="message-role">{THREAD_LABELS[message.role as "assistant" | "user"]}</div>
-                {!shouldCollapseIntoCard ? <div className="message-content">{message.content}</div> : null}
-                {isLastAssistant && lastAction === "ask_followup" ? <FollowUpCard readiness={readinessView} nextQuestion={lastNextQuestion} /> : null}
-                {isLastAssistant && items.length > 0 && (lastAction === "explain_results" || lastAction === "compare_options") ? (
+                <div className="message-content">{message.content}</div>
+                {isLastAssistant && lastAction === "compare_options" ? (
                   <div className="inline-results">
-                    <div className="assistant-card-title">{lastAction === "compare_options" ? "比较结果" : "当前建议"}</div>
+                    <div className="assistant-card-title">比较结果</div>
                     <div className="inline-bucket-summary">
                       {(["reach", "match", "safe"] as RecommendationBucket[]).map((bucket) => (
                         <span className={`bucket-summary ${bucket}`} key={bucket}>
