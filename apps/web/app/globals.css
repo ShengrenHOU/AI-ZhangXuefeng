@@ -745,6 +745,44 @@ textarea {
   color: var(--muted);
 }
 
+.rail-list {
+  display: grid;
+  gap: 12px;
+}
+
+.rail-item {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.86);
+}
+
+.rail-item-head {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.rail-item-head strong,
+.rail-item-head span {
+  display: block;
+}
+
+.rail-item-head span:last-child {
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.rail-item-meta {
+  margin: 12px 0 10px;
+}
+
+.rail-item-summary {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
 .message.pending .message-content {
   border-style: dashed;
   background: rgba(11, 87, 208, 0.05);

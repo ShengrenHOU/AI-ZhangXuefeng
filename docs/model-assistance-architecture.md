@@ -16,6 +16,14 @@ The model is expected to understand intent, update dossier memory, request
 context, generate directional guidance, recommend options, compare candidates,
 and summarize advice for families.
 
+The code is expected to:
+
+- organize the turn loop
+- maintain durable state
+- retrieve governed context
+- keep minimal safety and auditability
+- stay replaceable across model vendors
+
 ## Four Support Layers
 
 ### `skills/`
@@ -59,6 +67,7 @@ This is the governed context substrate.
 - published governed explainers
 - source metadata
 - knowledge versioning
+- future database-backed publication views
 
 Published knowledge is the first context source, not the only intelligence in
 the system.
@@ -84,6 +93,13 @@ The runtime is AI-first:
 - minimal guardrails keep outputs safe and auditable
 
 The model should not be reduced to a field collector.
+
+## Routing Principle
+
+- `instant` handles intent, memory updates, lightweight guidance, and light compare
+- `deepthink` handles formal recommendation, complex compare, and family summary
+- `/stream` is the formal delivery channel for recommendation and compare output
+- SSE remains the primary runtime protocol unless product needs change materially
 
 ## Model Responsibilities
 
@@ -118,3 +134,9 @@ It should not require rewriting:
 - governed knowledge
 - output schemas
 - audit records
+
+## Knowledge Evolution Principle
+
+- short term: file-based knowledge remains a valid ingestion source
+- medium term: the product should read published knowledge from a layered database
+- long term: open-web retrieval remains optional and degradable, never a hard dependency

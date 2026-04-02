@@ -10,6 +10,7 @@ export type ConversationActionType =
   | "refuse";
 
 export type RecommendationBucket = "reach" | "match" | "safe";
+export type CandidateBucket = RecommendationBucket;
 export type KnowledgePublicationStatus = "draft" | "reviewed" | "published";
 export type SourceKind = "official_fact" | "governed_explainer" | "generated_artifact";
 export type ReadinessLevel = "insufficient_info" | "near_ready" | "ready_for_recommendation";
@@ -89,6 +90,20 @@ export interface RecommendationVersion {
   reason: string;
   createdAt: string;
   recommendation: RecommendationRun;
+}
+
+export interface RecommendationTrace {
+  modelRoute: ModelRoute;
+  knowledgeVersion: string;
+  sourceIds: string[];
+  notes: string[];
+}
+
+export interface RecommendationTrace {
+  modelRoute: ModelRoute;
+  knowledgeVersion: string;
+  sourceIds: string[];
+  notes: string[];
 }
 
 export interface ComparePayload {
@@ -172,6 +187,70 @@ export interface WebEvidenceSlice extends RetrievedContextSlice {
   kind: "web_evidence";
   url: string;
   domain: string;
+}
+
+export interface DiscoveredCandidate {
+  schoolId: string;
+  programId: string;
+  schoolName: string;
+  programName: string;
+  city: string;
+  tuitionCny: number;
+  subjectRequirements: string[];
+  historicalRank?: number | null;
+  sourceIds: string[];
+  sourceUrls: string[];
+  evidenceSummary: string;
+  tags?: string[];
+}
+
+export interface DraftKnowledgeRecord {
+  recordId: string;
+  province: string;
+  year: number;
+  title: string;
+  sourceUrl: string;
+  sourceDomain: string;
+  fetchedAt: string;
+  schoolName?: string;
+  programName?: string;
+  tuitionCny?: number | null;
+  subjectRequirements?: string[];
+  historicalRank?: number | null;
+  evidenceSummary: string;
+  status: "draft";
+}
+
+export interface DiscoveredCandidate {
+  schoolId: string;
+  programId: string;
+  schoolName: string;
+  programName: string;
+  city: string;
+  tuitionCny: number;
+  subjectRequirements: string[];
+  historicalRank?: number | null;
+  sourceIds: string[];
+  sourceUrls: string[];
+  evidenceSummary: string;
+  tags?: string[];
+}
+
+export interface DraftKnowledgeRecord {
+  recordId: string;
+  province: string;
+  year: number;
+  title: string;
+  sourceUrl: string;
+  sourceDomain: string;
+  fetchedAt: string;
+  schoolName?: string;
+  programName?: string;
+  tuitionCny?: number | null;
+  subjectRequirements?: string[];
+  historicalRank?: number | null;
+  evidenceSummary: string;
+  status: "draft";
 }
 
 export type TaskTimeline = TaskStep[];

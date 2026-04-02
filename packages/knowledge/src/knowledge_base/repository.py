@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,9 @@ class KnowledgeRepository:
 
     def _version_root(self, province: str = "henan", year: int = 2026) -> Path:
         return self.root / "published" / province / str(year)
+
+    def _draft_root(self, province: str = "henan", year: int = 2026) -> Path:
+        return self.root / "draft" / province / str(year)
 
     def load_schools(self, province: str = "henan", year: int = 2026) -> list[dict[str, Any]]:
         return self._load_json(self._version_root(province, year) / "schools.json")
@@ -35,7 +39,25 @@ class KnowledgeRepository:
                 return source
         return None
 
+    def append_draft_discoveries(
+        self,
+        *,
+        province: str,
+        year: int,
+        records: list[dict[str, Any]],
+    ) -> Path | None:
+        if not records:
+            return None
+        draft_root = self._draft_root(province=province, year=year) / "auto-discovery"
+        draft_root.mkdir(parents=True, exist_ok=True)
+        path = draft_root / "discovered-candidates.jsonl"
+        timestamp = datetime.now(UTC).isoformat()
+        with path.open("a", encoding="utf-8") as handle:
+            for record in records:
+                payload = {"captured_at": timestamp, **record}
+                handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        return path
+
     def _load_json(self, path: Path) -> Any:
         with path.open("r", encoding="utf-8") as handle:
             return json.load(handle)
-

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from .db import session_scope
-from .models import FeedbackModel, SessionStateModel
+from .models import DraftKnowledgeRecordModel, FeedbackModel, SessionStateModel
 
 
 class SessionRepository:
@@ -86,3 +86,16 @@ class FeedbackRepository:
             session.flush()
             session.refresh(model)
             return model
+
+
+class DraftKnowledgeRepository:
+    def create_many(self, records: list[dict]) -> list[DraftKnowledgeRecordModel]:
+        if not records:
+            return []
+        with session_scope() as session:
+            models = [DraftKnowledgeRecordModel(**record) for record in records]
+            session.add_all(models)
+            session.flush()
+            for model in models:
+                session.refresh(model)
+            return models

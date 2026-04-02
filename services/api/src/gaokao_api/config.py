@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     ark_base_url: str = "https://ark.cn-beijing.volces.com/api/coding/v3"
     enable_live_llm: bool = False
     enable_web_retrieval: bool = True
+    prefer_native_web_search: bool = True
+    enable_draft_writeback: bool = True
     web_retrieval_max_results: int = 4
     web_context_char_limit: int = 1400
     knowledge_root: str = "packages/knowledge/data"

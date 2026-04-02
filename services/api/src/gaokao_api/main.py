@@ -190,25 +190,31 @@ def stream_message(thread_id: str, payload: ChatMessageRequest) -> StreamingResp
         "task_timeline": existing.task_timeline,
     }
 
-    result = state_machine.handle_message(state, payload.content)
-    persisted_recommendation = result["recommendation"] if result["recommendation"] is not None else existing.recommendation
-
-    session_repo.update(
-        thread_id,
-        result["state"],
-        result["dossier"],
-        state["messages"],
-        pending_recommendation_confirmation=result["pending_recommendation_confirmation"],
-        field_provenance=result["field_provenance"],
-        recommendation=persisted_recommendation,
-        recommendation_fingerprint=result["recommendation_fingerprint"],
-        recommendation_versions=result["recommendation_versions"],
-        task_timeline=result["task_timeline"],
-    )
-
     def event_stream():
         yield _sse_event("status", {"message": "正在理解你的意图"})
+        yield _sse_event("task_step", {"step": "understand", "status": "completed", "label": "正在理解你的意图"})
+        yield _sse_event("task_step", {"step": "update_memory", "status": "running", "label": "正在更新学生档案"})
+        result = state_machine.handle_message(state, payload.content)
+        persisted_recommendation = result["recommendation"] if result["recommendation"] is not None else existing.recommendation
+
+        session_repo.update(
+            thread_id,
+            result["state"],
+            result["dossier"],
+            state["messages"],
+            pending_recommendation_confirmation=result["pending_recommendation_confirmation"],
+            field_provenance=result["field_provenance"],
+            recommendation=persisted_recommendation,
+            recommendation_fingerprint=result["recommendation_fingerprint"],
+            recommendation_versions=result["recommendation_versions"],
+            task_timeline=result["task_timeline"],
+        )
+
+        yielded_steps = {"understand", "update_memory"}
         for step in result["task_timeline"]:
+            if step["step"] in yielded_steps:
+                yield _sse_event("task_step", step)
+                continue
             yield _sse_event("task_step", step)
         if result["model_action"]["action"] == "directional_guidance":
             yield _sse_event(
@@ -219,9 +225,11 @@ def stream_message(thread_id: str, payload: ChatMessageRequest) -> StreamingResp
                 },
             )
         if result["model_action"]["action"] in {"recommend", "refine_recommendation", "explain_results"} and persisted_recommendation:
+            yield _sse_event("status", {"message": "正在生成正式建议"})
             for chunk in _stream_recommendation_text(result["dossier"], payload.content):
                 yield _sse_event("assistant_delta", {"delta": chunk})
         elif result["model_action"]["action"] == "compare_options":
+            yield _sse_event("status", {"message": "正在比较候选方案"})
             for chunk in _chunk_text(result["assistant_message"]):
                 yield _sse_event("compare_delta", {"delta": chunk})
         if persisted_recommendation:
