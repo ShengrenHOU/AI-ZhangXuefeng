@@ -21,7 +21,7 @@ Only the online lane is part of the current product runtime.
 1. the user sends a message
 2. the online workflow updates session memory and dossier state
 3. the model interprets intent through runtime promptpacks
-4. the system gathers published knowledge and optional open-web context
+4. the system gathers published knowledge and model-native/open-web context
 5. the model returns either:
    - a follow-up
    - directional guidance
@@ -72,3 +72,4 @@ This layer is distinct from repo skills:
 - recommendation items keep internal source trace even when the UI hides links
 - workflow should enhance the model, not replace it as the main recommender
 - compare and recommendation should both flow through SSE, not separate interaction models
+- published knowledge stabilizes recommendation, but does not define the full candidate universe

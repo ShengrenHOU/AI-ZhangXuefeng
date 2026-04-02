@@ -11,8 +11,8 @@ the online runtime with unstable or unreviewed knowledge.
 - only reviewed records can be promoted to `published`
 - published knowledge must record source URL, source type, year, fetch time, and version
 - conflicts are tracked before promotion
-- the online runtime reads only published knowledge
-- open-web retrieval may enrich the model, but does not replace the published layer
+- the online runtime trusts only published knowledge as governed memory
+- open-web retrieval may enrich candidate discovery and explanation, but does not silently overwrite the published layer
 
 ## Target Data Shape
 
@@ -43,3 +43,4 @@ During MVP:
 - file-based knowledge may continue to exist as ingestion input
 - publication logic should remain compatible with later database-backed reads
 - online contracts must not depend on whether published knowledge came from files or the future database
+- automatic draft writeback is allowed, but automatic publish is not

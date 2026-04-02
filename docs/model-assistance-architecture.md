@@ -69,8 +69,8 @@ This is the governed context substrate.
 - knowledge versioning
 - future database-backed publication views
 
-Published knowledge is the first context source, not the only intelligence in
-the system.
+Published knowledge is a trusted context layer, not the full candidate
+universe.
 
 ### `packages/types/`
 
@@ -100,6 +100,7 @@ The model should not be reduced to a field collector.
 - `deepthink` handles formal recommendation, complex compare, and family summary
 - `/stream` is the formal delivery channel for recommendation and compare output
 - SSE remains the primary runtime protocol unless product needs change materially
+- model-native search should be preferred when available, with controlled retrieval as fallback
 
 ## Model Responsibilities
 
@@ -139,4 +140,4 @@ It should not require rewriting:
 
 - short term: file-based knowledge remains a valid ingestion source
 - medium term: the product should read published knowledge from a layered database
-- long term: open-web retrieval remains optional and degradable, never a hard dependency
+- long term: model-native open-web retrieval remains preferred, while controlled retrieval stays fallback and draft writeback stays governed

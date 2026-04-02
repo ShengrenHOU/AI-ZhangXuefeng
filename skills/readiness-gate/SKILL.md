@@ -34,6 +34,7 @@ Provide minimum safety guardrails without reducing the model to a mechanical fie
 - if key fields are missing, the system should still prefer directional guidance before asking one high-value follow-up
 - if constraints conflict, the system should clarify before presenting a strong recommendation
 - recommendation should stay reversible when new information arrives
+- explicit user intent to recommend should be enough to start recommendation once minimum safety conditions are met
 
 ## Minimum Recommendation Gate
 
@@ -57,3 +58,4 @@ Preference or constraint includes:
 - do not let obvious hard conflicts pass silently
 - do not present a fully precise recommendation when core information is almost empty
 - keep recommendation reversible when new information arrives
+- do not let readiness bookkeeping become the main dialogue driver

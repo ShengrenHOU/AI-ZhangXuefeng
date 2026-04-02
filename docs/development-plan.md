@@ -91,8 +91,9 @@ The first stable runtime skills are:
 
 ### Retrieval Policy
 
-- published knowledge is always the first formal context source
-- open web retrieval is enabled by default, but must degrade safely
+- published knowledge is trusted context, not the candidate boundary
+- model-native open web retrieval is preferred when available
+- controlled open web retrieval remains fallback and must degrade safely
 - retrieval queries must use normalized dossier fields only
 - China-first search assumptions apply by default
 - low-quality open-web results may inform the model but must not override governed knowledge blindly
@@ -120,6 +121,7 @@ The first stable runtime skills are:
 - route state-machine decisions through runtime skills before falling back to hardcoded behavior
 - keep deterministic extraction only as supporting memory enrichment, not as the main conversation driver
 - unify recommendation, compare, and refinement around `/stream`
+- remove default recommendation confirmation as the dominant path; only keep explicit confirmation or conflict clarification when truly needed
 
 ### Stage B: Chat-native Product Consolidation
 

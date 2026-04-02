@@ -112,6 +112,18 @@ def test_stream_endpoint_returns_task_steps_and_final_message() -> None:
     assert "event: final_message" in body
 
 
+def test_stream_endpoint_emits_task_steps_before_final_message() -> None:
+    start = client.post("/api/session/start")
+    thread_id = start.json()["thread_id"]
+    response = client.post(
+        f"/api/session/{thread_id}/stream",
+        json={"content": "河南，位次: 65000，物化生，想学计算机，预算6500，帮我先给方向。"},
+    )
+    assert response.status_code == 200
+    body = response.text
+    assert body.index("event: task_step") < body.index("event: final_message")
+
+
 def test_stream_endpoint_emits_compare_delta_for_chat_native_compare() -> None:
     start = client.post("/api/session/start")
     thread_id = start.json()["thread_id"]

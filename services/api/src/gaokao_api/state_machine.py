@@ -17,14 +17,14 @@ from .llm import ArkCodingPlanClient, CandidateDiscoveryResult, PlannerAction, R
 from .web_retrieval import WebRetriever
 
 
-FOLLOW_UP_ORDER = [
-    ("province", "先确认一下，你报考的是哪个省份？"),
-    ("rank_or_score", "告诉我你的位次或分数，我才能继续往下收敛推荐。"),
-    ("subject_combination", "你的选科组合是什么？比如物理、化学、生物。"),
-    ("major_interests", "你现在更倾向哪些专业方向？可以先说一两个。"),
-    ("budget", "家里一年大概能接受多少学费预算？"),
-    ("decision_anchor", "我还想确认一个家庭决策锚点：比如更看重离家近、接受不接受调剂，或者你想偏稳一点还是偏冲一点。"),
-]
+FOLLOW_UP_PROMPTS = {
+    "province": "先确认一下，你报考的是哪个省份？",
+    "rank_or_score": "告诉我你的位次或分数，我才能继续往下收敛推荐。",
+    "subject_combination": "你的选科组合是什么？比如物理、化学、生物。",
+    "major_interests": "你现在更倾向哪些专业方向？可以先说一两个。",
+    "budget": "家里一年大概能接受多少学费预算？",
+    "decision_anchor": "我还想确认一个家庭决策锚点：比如更看重离家近、接受不接受调剂，或者你想偏稳一点还是偏冲一点。",
+}
 
 MISSING_FIELD_LABELS = {
     "province": "报考省份",
@@ -161,7 +161,8 @@ class SessionStateMachine:
         cached_recommendation = state.get("recommendation")
         cached_recommendation_fingerprint = state.get("recommendation_fingerprint")
         recommendation_versions = list(state.get("recommendation_versions", []))
-        task_timeline: list[dict[str, Any]] = [self._task_step("understand", "completed", "正在理解你的意图")]
+        task_timeline: list[dict[str, Any]] = []
+        self._record_task_step(task_timeline, "understand", "completed", "正在理解你的意图", emit=emit)
 
         deterministic_patch, deterministic_provenance = self._extract_patch(content)
         draft_dossier = self._merge_dossier(dossier, deterministic_patch)
@@ -191,7 +192,7 @@ class SessionStateMachine:
         dossier = self._merge_dossier(dossier, patch)
         field_provenance = self._merge_provenance(existing_provenance, deterministic_provenance, live_provenance)
         readiness = self.evaluate_dossier(dossier)
-        task_timeline.append(self._task_step("update_memory", "completed", "正在更新学生档案"))
+        self._record_task_step(task_timeline, "update_memory", "completed", "正在更新学生档案", emit=emit)
 
         recommendation = None
         next_question: str | None = None
@@ -205,7 +206,7 @@ class SessionStateMachine:
             pending_recommendation_confirmation = False
             assistant_message = self._build_compare_message(dossier, compare_pair[0], compare_pair[1])
             next_question = "如果你还想继续缩小范围，可以直接告诉我你更看重城市、专业还是稳妥程度。"
-            task_timeline.append(self._task_step("compare", "completed", "正在比较候选专业"))
+            self._record_task_step(task_timeline, "compare", "completed", "正在比较候选专业", emit=emit)
         elif readiness["conflicts"]:
             action = "confirm_constraints"
             state_name = "constraint_confirmation"
@@ -262,7 +263,7 @@ class SessionStateMachine:
                         recommendation,
                         label="当前版本",
                     )
-                task_timeline.append(self._task_step("recommend", "completed", "正在生成正式建议"))
+                self._record_task_step(task_timeline, "recommend", "completed", "正在生成正式建议", emit=emit)
         elif readiness["can_recommend"] and self._should_start_recommendation(
             content=content,
             planner_suggested_action=planner_suggested_action,
@@ -289,14 +290,14 @@ class SessionStateMachine:
                     recommendation,
                     label="当前版本",
                 )
-            task_timeline.append(self._task_step("recommend", "completed", "正在生成正式建议"))
+            self._record_task_step(task_timeline, "recommend", "completed", "正在生成正式建议", emit=emit)
         elif readiness["can_recommend"] and self._should_confirm_before_recommendation(content):
             action = "confirm_constraints"
             state_name = "constraint_confirmation"
             pending_recommendation_confirmation = True
             next_question = self._build_confirmation_prompt(dossier)
             assistant_message = next_question
-            task_timeline.append(self._task_step("reflect", "completed", "正在确认最新条件"))
+            self._record_task_step(task_timeline, "reflect", "completed", "正在确认最新条件", emit=emit)
         elif readiness["can_recommend"]:
             recommendation_fingerprint = self._recommendation_fingerprint(dossier)
             if cached_recommendation and cached_recommendation_fingerprint == recommendation_fingerprint:
@@ -331,8 +332,8 @@ class SessionStateMachine:
             pending_recommendation_confirmation = False
             assistant_message, context_slice = self._build_directional_guidance(dossier, readiness, content)
             next_question = self._next_question(dossier, readiness, planner_action)
-            task_timeline.extend(self._context_task_steps(context_slice))
-            task_timeline.append(self._task_step("respond", "completed", "正在整理方向性建议"))
+            self._extend_context_task_steps(task_timeline, context_slice, emit=emit)
+            self._record_task_step(task_timeline, "respond", "completed", "正在整理方向性建议", emit=emit)
         else:
             action = "ask_followup"
             state_name = "follow_up_questioning"
@@ -821,7 +822,7 @@ class SessionStateMachine:
         if readiness["conflicts"]:
             return readiness["conflicts"][0]["message"]
 
-        for field_name, _prompt in FOLLOW_UP_ORDER:
+        for field_name in FOLLOW_UP_PROMPTS:
             if field_name not in readiness["missing_fields"]:
                 continue
             if field_name == "preference_or_constraint":
@@ -1055,6 +1056,30 @@ class SessionStateMachine:
 
     def _task_step(self, step: str, status: str, label: str) -> dict[str, str]:
         return {"step": step, "status": status, "label": label}
+
+    def _record_task_step(
+        self,
+        timeline: list[dict[str, Any]],
+        step: str,
+        status: str,
+        label: str,
+        *,
+        emit: callable | None = None,
+    ) -> None:
+        payload = self._task_step(step, status, label)
+        timeline.append(payload)
+        if emit is not None:
+            emit("task_step", payload)
+
+    def _extend_context_task_steps(
+        self,
+        timeline: list[dict[str, Any]],
+        context_slice: dict[str, Any],
+        *,
+        emit: callable | None = None,
+    ) -> None:
+        for step in self._context_task_steps(context_slice):
+            self._record_task_step(timeline, step["step"], step["status"], step["label"], emit=emit)
 
     def _context_task_steps(self, context_slice: dict[str, Any]) -> list[dict[str, str]]:
         steps = [self._task_step("retrieve", "completed", "正在检索已发布知识")]

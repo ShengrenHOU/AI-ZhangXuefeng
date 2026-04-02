@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from queue import Queue
+from threading import Thread
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -192,30 +194,44 @@ def stream_message(thread_id: str, payload: ChatMessageRequest) -> StreamingResp
 
     def event_stream():
         yield _sse_event("status", {"message": "正在理解你的意图"})
-        yield _sse_event("task_step", {"step": "understand", "status": "completed", "label": "正在理解你的意图"})
-        yield _sse_event("task_step", {"step": "update_memory", "status": "running", "label": "正在更新学生档案"})
-        result = state_machine.handle_message(state, payload.content)
-        persisted_recommendation = result["recommendation"] if result["recommendation"] is not None else existing.recommendation
 
-        session_repo.update(
-            thread_id,
-            result["state"],
-            result["dossier"],
-            state["messages"],
-            pending_recommendation_confirmation=result["pending_recommendation_confirmation"],
-            field_provenance=result["field_provenance"],
-            recommendation=persisted_recommendation,
-            recommendation_fingerprint=result["recommendation_fingerprint"],
-            recommendation_versions=result["recommendation_versions"],
-            task_timeline=result["task_timeline"],
-        )
+        queue: Queue[tuple[str, dict[str, object]] | tuple[str, dict[str, object], dict | None]] = Queue()
 
-        yielded_steps = {"understand", "update_memory"}
-        for step in result["task_timeline"]:
-            if step["step"] in yielded_steps:
-                yield _sse_event("task_step", step)
-                continue
-            yield _sse_event("task_step", step)
+        def emit(event: str, payload: dict[str, object]) -> None:
+            queue.put((event, payload))
+
+        def worker() -> None:
+            result = state_machine.handle_message(state, payload.content, emit=emit)
+            persisted_recommendation = result["recommendation"] if result["recommendation"] is not None else existing.recommendation
+            session_repo.update(
+                thread_id,
+                result["state"],
+                result["dossier"],
+                state["messages"],
+                pending_recommendation_confirmation=result["pending_recommendation_confirmation"],
+                field_provenance=result["field_provenance"],
+                recommendation=persisted_recommendation,
+                recommendation_fingerprint=result["recommendation_fingerprint"],
+                recommendation_versions=result["recommendation_versions"],
+                task_timeline=result["task_timeline"],
+            )
+            queue.put(("__done__", result, persisted_recommendation))
+
+        Thread(target=worker, daemon=True).start()
+
+        result = None
+        persisted_recommendation = None
+        while True:
+            item = queue.get()
+            if item[0] == "__done__":
+                result = item[1]
+                persisted_recommendation = item[2]
+                break
+            yield _sse_event(item[0], item[1])
+
+        if result is None:
+            return
+
         if result["model_action"]["action"] == "directional_guidance":
             yield _sse_event(
                 "directional_guidance",
