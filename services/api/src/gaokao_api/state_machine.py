@@ -6,23 +6,25 @@ import re
 import uuid
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlparse
 
 from knowledge_base import KnowledgeRepository
 from recommendation_core import RecommendationCore
 from recommendation_core.models import FamilyConstraintSet, RecommendationDecision, RecommendationRequest, RecommendationRun, StudentDossier
 
-from .llm import ArkCodingPlanClient, PlannerAction, RecommendationSelection
+from .config import settings
+from .llm import ArkCodingPlanClient, CandidateDiscoveryResult, PlannerAction, RecommendationSelection
 from .web_retrieval import WebRetriever
 
 
-FOLLOW_UP_ORDER = [
-    ("province", "先确认一下，你报考的是哪个省份？"),
-    ("rank_or_score", "告诉我你的位次或分数，我才能继续往下收敛推荐。"),
-    ("subject_combination", "你的选科组合是什么？比如物理、化学、生物。"),
-    ("major_interests", "你现在更倾向哪些专业方向？可以先说一两个。"),
-    ("budget", "家里一年大概能接受多少学费预算？"),
-    ("decision_anchor", "我还想确认一个家庭决策锚点：比如更看重离家近、接受不接受调剂，或者你想偏稳一点还是偏冲一点。"),
-]
+FOLLOW_UP_PROMPTS = {
+    "province": "先确认一下，你报考的是哪个省份？",
+    "rank_or_score": "告诉我你的位次或分数，我才能继续往下收敛推荐。",
+    "subject_combination": "你的选科组合是什么？比如物理、化学、生物。",
+    "major_interests": "你现在更倾向哪些专业方向？可以先说一两个。",
+    "budget": "家里一年大概能接受多少学费预算？",
+    "decision_anchor": "我还想确认一个家庭决策锚点：比如更看重离家近、接受不接受调剂，或者你想偏稳一点还是偏冲一点。",
+}
 
 MISSING_FIELD_LABELS = {
     "province": "报考省份",
@@ -75,6 +77,8 @@ NEGATIVE_RECOMMENDATION_SIGNALS = {
     "还要补充",
     "先别推荐",
     "先修改",
+    "先别沿用",
+    "先别用这版",
     "not yet",
 }
 
@@ -151,7 +155,7 @@ class SessionStateMachine:
             "field_provenance": {},
         }
 
-    def handle_message(self, state: dict[str, Any], content: str) -> dict[str, Any]:
+    def handle_message(self, state: dict[str, Any], content: str, emit: callable | None = None) -> dict[str, Any]:
         dossier = StudentDossier(**state["dossier"])
         original_dossier = StudentDossier(**state["dossier"])
         existing_provenance = dict(state.get("field_provenance", {}))
@@ -159,7 +163,8 @@ class SessionStateMachine:
         cached_recommendation = state.get("recommendation")
         cached_recommendation_fingerprint = state.get("recommendation_fingerprint")
         recommendation_versions = list(state.get("recommendation_versions", []))
-        task_timeline: list[dict[str, Any]] = [self._task_step("understand", "completed", "正在理解你的意图")]
+        task_timeline: list[dict[str, Any]] = []
+        self._record_task_step(task_timeline, "understand", "completed", "正在理解你的意图", emit=emit)
 
         deterministic_patch, deterministic_provenance = self._extract_patch(content)
         draft_dossier = self._merge_dossier(dossier, deterministic_patch)
@@ -189,12 +194,14 @@ class SessionStateMachine:
         dossier = self._merge_dossier(dossier, patch)
         field_provenance = self._merge_provenance(existing_provenance, deterministic_provenance, live_provenance)
         readiness = self.evaluate_dossier(dossier)
-        task_timeline.append(self._task_step("update_memory", "completed", "正在更新学生档案"))
+        self._record_task_step(task_timeline, "update_memory", "completed", "正在更新学生档案", emit=emit)
 
         recommendation = None
+        clear_recommendation = False
         next_question: str | None = None
         reasoning_summary_override: str | None = None
         compare_pair = self._resolve_compare_pair(content, cached_recommendation)
+        planner_suggested_action = planner_action.action if planner_action else None
 
         if compare_pair:
             action = "compare_options"
@@ -202,7 +209,7 @@ class SessionStateMachine:
             pending_recommendation_confirmation = False
             assistant_message = self._build_compare_message(dossier, compare_pair[0], compare_pair[1])
             next_question = "如果你还想继续缩小范围，可以直接告诉我你更看重城市、专业还是稳妥程度。"
-            task_timeline.append(self._task_step("compare", "completed", "正在比较候选专业"))
+            self._record_task_step(task_timeline, "compare", "completed", "正在比较候选专业", emit=emit)
         elif readiness["conflicts"]:
             action = "confirm_constraints"
             state_name = "constraint_confirmation"
@@ -221,6 +228,10 @@ class SessionStateMachine:
             pending_recommendation_confirmation = False
             next_question = "好，我们先不沿用这版建议。你最想先改哪一项条件，或者你最想重新考虑哪个方向？"
             assistant_message = next_question
+            cached_recommendation = None
+            cached_recommendation_fingerprint = None
+            recommendation_versions = []
+            clear_recommendation = True
         elif pending_recommendation_confirmation and readiness["can_recommend"] and self._is_affirmation(content):
             if self._has_confirmation_relevant_change(original_dossier, dossier):
                 action = "confirm_constraints"
@@ -236,7 +247,11 @@ class SessionStateMachine:
                 else:
                     recommendation, recommendation_summary, context_slice = self._run_recommendation(state["thread_id"], dossier, content)
                     task_timeline.extend(self._context_task_steps(context_slice))
-                action = "explain_results"
+                action = (
+                    "refine_recommendation"
+                    if cached_recommendation and cached_recommendation_fingerprint != recommendation_fingerprint
+                    else "recommend"
+                )
                 state_name = "result_explanation"
                 pending_recommendation_confirmation = False
                 field_provenance = self._merge_provenance(
@@ -252,22 +267,77 @@ class SessionStateMachine:
                         recommendation,
                         label="当前版本",
                     )
-                task_timeline.append(self._task_step("recommend", "completed", "正在生成正式建议"))
-        elif readiness["can_recommend"]:
+                self._record_task_step(task_timeline, "recommend", "completed", "正在生成正式建议", emit=emit)
+        elif readiness["can_recommend"] and self._should_start_recommendation(
+            content=content,
+            planner_suggested_action=planner_suggested_action,
+        ):
+            recommendation_fingerprint = self._recommendation_fingerprint(dossier)
+            if cached_recommendation and cached_recommendation_fingerprint == recommendation_fingerprint:
+                recommendation = cached_recommendation
+                recommendation_summary = "按你刚才给出的条件，我直接沿用当前这版正式建议。"
+            else:
+                recommendation, recommendation_summary, context_slice = self._run_recommendation(state["thread_id"], dossier, content)
+                task_timeline.extend(self._context_task_steps(context_slice))
+            action = (
+                "refine_recommendation"
+                if cached_recommendation and cached_recommendation_fingerprint != recommendation_fingerprint
+                else "recommend"
+            )
+            state_name = "result_explanation"
+            pending_recommendation_confirmation = False
+            assistant_message = recommendation_summary
+            reasoning_summary_override = recommendation_summary
+            if recommendation is not None:
+                recommendation_versions = self._append_recommendation_version(
+                    recommendation_versions,
+                    recommendation,
+                    label="当前版本",
+                )
+            self._record_task_step(task_timeline, "recommend", "completed", "正在生成正式建议", emit=emit)
+        elif readiness["can_recommend"] and self._should_confirm_before_recommendation(content):
             action = "confirm_constraints"
             state_name = "constraint_confirmation"
             pending_recommendation_confirmation = True
             next_question = self._build_confirmation_prompt(dossier)
             assistant_message = next_question
-            task_timeline.append(self._task_step("reflect", "completed", "正在确认最新条件"))
-        elif self._looks_like_recommendation_request(content):
+            self._record_task_step(task_timeline, "reflect", "completed", "正在确认最新条件", emit=emit)
+        elif readiness["can_recommend"]:
+            recommendation_fingerprint = self._recommendation_fingerprint(dossier)
+            if cached_recommendation and cached_recommendation_fingerprint == recommendation_fingerprint:
+                recommendation = cached_recommendation
+                recommendation_summary = "我先沿用当前这版建议；如果你继续补条件，我会立即帮你重排。"
+            else:
+                recommendation, recommendation_summary, context_slice = self._run_recommendation(state["thread_id"], dossier, content)
+                task_timeline.extend(self._context_task_steps(context_slice))
+            action = (
+                "refine_recommendation"
+                if cached_recommendation and cached_recommendation_fingerprint != recommendation_fingerprint
+                else "recommend"
+            )
+            state_name = "result_explanation"
+            pending_recommendation_confirmation = False
+            assistant_message = recommendation_summary
+            reasoning_summary_override = recommendation_summary
+            if recommendation is not None:
+                recommendation_versions = self._append_recommendation_version(
+                    recommendation_versions,
+                    recommendation,
+                    label="当前版本",
+                )
+            task_timeline.append(self._task_step("recommend", "completed", "正在生成正式建议"))
+        elif self._should_offer_directional_guidance(
+            content=content,
+            planner_suggested_action=planner_suggested_action,
+            readiness=readiness,
+        ):
             action = "directional_guidance"
             state_name = "directional_guidance"
             pending_recommendation_confirmation = False
             assistant_message, context_slice = self._build_directional_guidance(dossier, readiness, content)
             next_question = self._next_question(dossier, readiness, planner_action)
-            task_timeline.extend(self._context_task_steps(context_slice))
-            task_timeline.append(self._task_step("respond", "completed", "正在整理方向性建议"))
+            self._extend_context_task_steps(task_timeline, context_slice, emit=emit)
+            self._record_task_step(task_timeline, "respond", "completed", "正在整理方向性建议", emit=emit)
         else:
             action = "ask_followup"
             state_name = "follow_up_questioning"
@@ -291,6 +361,7 @@ class SessionStateMachine:
         state["pending_recommendation_confirmation"] = pending_recommendation_confirmation
         state["field_provenance"] = field_provenance
         state["recommendation"] = recommendation if recommendation is not None else cached_recommendation
+        state["clear_recommendation"] = clear_recommendation
         state["recommendation_versions"] = recommendation_versions
         state["task_timeline"] = task_timeline
 
@@ -314,6 +385,7 @@ class SessionStateMachine:
                 "readiness": readiness,
             },
             "recommendation": recommendation if recommendation is not None else cached_recommendation,
+            "clear_recommendation": clear_recommendation,
         }
 
     def evaluate_dossier(self, dossier: StudentDossier) -> dict[str, Any]:
@@ -328,7 +400,7 @@ class SessionStateMachine:
             missing.append("subject_combination")
         if not dossier.major_interests:
             missing.append("major_interests")
-        if dossier.family_constraints.annual_budget_cny is None:
+        if not self._has_budget_context(dossier):
             missing.append("budget")
         if not self._has_decision_anchor(dossier):
             missing.append("decision_anchor")
@@ -400,6 +472,16 @@ class SessionStateMachine:
         knowledge_version = knowledge_slice["knowledge_version"]
 
         if self.planner_client is not None and self.planner_client.is_configured():
+            discovery = self.planner_client.discover_candidates_via_web(
+                thread_id=thread_id,
+                dossier=dossier.model_dump(),
+                user_message=user_message,
+                retrieved_knowledge=knowledge_slice,
+                fallback_web_results=knowledge_slice.get("web_results", []),
+            )
+            if discovery.candidates:
+                knowledge_slice = self._merge_discovered_candidates(knowledge_slice, discovery)
+                self._write_discovery_draft_records(discovery, thread_id=thread_id, dossier=dossier)
             recommendation_selection = self.planner_client.recommend_from_knowledge(
                 dossier=dossier.model_dump(),
                 retrieved_knowledge=knowledge_slice,
@@ -431,6 +513,89 @@ class SessionStateMachine:
         except Exception:
             return StudentDossier()
 
+    def _merge_discovered_candidates(self, knowledge_slice: dict[str, Any], discovery: CandidateDiscoveryResult) -> dict[str, Any]:
+        existing_candidates = list(knowledge_slice.get("candidates", []))
+        existing_keys = {
+            (candidate["school_name"].strip().lower(), candidate["program_name"].strip().lower())
+            for candidate in existing_candidates
+        }
+        appended: list[dict[str, Any]] = []
+
+        for index, candidate in enumerate(discovery.candidates, start=1):
+            dedupe_key = (candidate.school_name.strip().lower(), candidate.program_name.strip().lower())
+            if dedupe_key in existing_keys:
+                continue
+            existing_keys.add(dedupe_key)
+            source_ids = candidate.source_ids or [self._web_source_id(url) for url in candidate.source_urls]
+            source_summaries = candidate.source_summaries or [
+                {
+                    "source_id": source_id,
+                    "kind": "generated_artifact",
+                    "title": urlparse(url).netloc or url,
+                    "summary": candidate.evidence_summary,
+                }
+                for source_id, url in zip(source_ids, candidate.source_urls, strict=False)
+            ]
+            appended.append(
+                {
+                    "program_id": candidate.program_id or self._synthetic_program_id(candidate.school_name, candidate.program_name),
+                    "school_id": candidate.school_id or self._synthetic_school_id(candidate.school_name),
+                    "school_name": candidate.school_name,
+                    "program_name": candidate.program_name,
+                    "city": candidate.city or "",
+                    "city_label": DISPLAY_LABELS.get(candidate.city or "", candidate.city or "待确认"),
+                    "tuition_cny": candidate.tuition_cny or 0,
+                    "historical_rank": candidate.historical_rank,
+                    "tags": candidate.tags,
+                    "subject_requirements": candidate.subject_requirements,
+                    "school_tier": "web_discovered",
+                    "source_ids": source_ids,
+                    "source_summaries": source_summaries,
+                    "retrieval_score": candidate.retrieval_score or round(0.7 - index * 0.03, 3),
+                    "retrieval_rank": len(existing_candidates) + len(appended),
+                }
+            )
+
+        merged = existing_candidates + appended
+        merged.sort(key=lambda item: item.get("retrieval_score", 0), reverse=True)
+        for idx, candidate in enumerate(merged[:10], start=1):
+            candidate["retrieval_rank"] = idx
+
+        return {
+            **knowledge_slice,
+            "candidates": merged[:10],
+            "discovery_reasoning": discovery.reasoning_summary,
+        }
+
+    def _write_discovery_draft_records(
+        self,
+        discovery: CandidateDiscoveryResult,
+        *,
+        thread_id: str,
+        dossier: StudentDossier,
+    ) -> None:
+        if (
+            not settings.enable_draft_writeback
+            or not discovery.candidates
+            or self.planner_client is None
+            or not self.planner_client.is_configured()
+        ):
+            return
+        records = self.planner_client.extract_web_evidence_for_draft(
+            thread_id=thread_id,
+            dossier=dossier.model_dump(),
+            discovered=discovery,
+        )
+        if records:
+            try:
+                self.repository.append_draft_discoveries(
+                    province=dossier.province or self.province,
+                    year=dossier.target_year or self.target_year,
+                    records=records,
+                )
+            except Exception:
+                pass
+
     def _merge_patch_objects(self, primary: StudentDossier, secondary: StudentDossier) -> StudentDossier:
         merged = primary.model_dump(exclude_none=True, exclude_defaults=True)
         secondary_data = secondary.model_dump(exclude_none=True, exclude_defaults=True)
@@ -458,7 +623,13 @@ class SessionStateMachine:
                 updated[key] = value
         return StudentDossier(**updated)
 
-    def _retrieve_knowledge_slice(self, dossier: StudentDossier, user_message: str = "") -> dict[str, Any]:
+    def _retrieve_knowledge_slice(
+        self,
+        dossier: StudentDossier,
+        user_message: str = "",
+        *,
+        strict_subject_match: bool = True,
+    ) -> dict[str, Any]:
         manifest = self.repository.load_manifest(province=self.province, year=self.target_year)
         programs = self.repository.load_programs(province=self.province, year=self.target_year)
         schools = self.repository.load_schools(province=self.province, year=self.target_year)
@@ -471,7 +642,7 @@ class SessionStateMachine:
         for program in programs:
             required_subjects = set(program.get("subject_requirements", []))
             dossier_subjects = set(dossier.subject_combination)
-            if required_subjects and not required_subjects.issubset(dossier_subjects):
+            if strict_subject_match and required_subjects and not required_subjects.issubset(dossier_subjects):
                 continue
 
             school = school_index[program["school_id"]]
@@ -604,7 +775,7 @@ class SessionStateMachine:
             f"年份：{dossier.target_year or '待确认'}",
             f"选科：{self._join_labels(dossier.subject_combination or [], subject_mode=True) or '待确认'}",
             f"专业兴趣：{self._join_labels(dossier.major_interests or [], major_mode=True) or '待确认'}",
-            f"预算：{str(dossier.family_constraints.annual_budget_cny) + ' 元/年' if dossier.family_constraints.annual_budget_cny else '待确认'}",
+            f"预算：{self._budget_label(dossier)}",
         ]
         if dossier.rank is not None:
             fields.insert(2, f"位次：{dossier.rank}")
@@ -624,11 +795,24 @@ class SessionStateMachine:
     def _has_preference_or_constraint(self, dossier: StudentDossier) -> bool:
         return bool(
             dossier.major_interests
-            or dossier.family_constraints.annual_budget_cny is not None
+            or self._has_budget_context(dossier)
             or dossier.family_constraints.city_preference
             or dossier.family_constraints.adjustment_accepted is not None
             or dossier.risk_appetite is not None
         )
+
+    def _has_budget_context(self, dossier: StudentDossier) -> bool:
+        if dossier.family_constraints.annual_budget_cny is not None:
+            return True
+        notes = dossier.family_constraints.notes or []
+        return any(note == "budget unconstrained" for note in notes)
+
+    def _budget_label(self, dossier: StudentDossier) -> str:
+        if dossier.family_constraints.annual_budget_cny is not None:
+            return f"{dossier.family_constraints.annual_budget_cny} 元/年"
+        if self._has_budget_context(dossier):
+            return "学费不是主要约束"
+        return "待确认"
 
     def _has_decision_anchor(self, dossier: StudentDossier) -> bool:
         return bool(
@@ -638,34 +822,20 @@ class SessionStateMachine:
             or dossier.risk_appetite is not None
         )
 
-    def _resolve_action(self, readiness: dict[str, Any]) -> str:
-        if readiness["conflicts"]:
-            return "confirm_constraints"
-        if readiness["can_recommend"]:
-            return "confirm_constraints"
-        return "ask_followup"
-
     def _next_question(self, dossier: StudentDossier, readiness: dict[str, Any], planner_action: PlannerAction | None = None) -> str | None:
+        if planner_action and planner_action.next_question:
+            return planner_action.next_question
         if readiness["conflicts"]:
-            if planner_action and planner_action.next_question:
-                return planner_action.next_question
             return readiness["conflicts"][0]["message"]
 
-        for field_name, prompt in FOLLOW_UP_ORDER:
-            if field_name == "province" and not dossier.province:
-                return planner_action.next_question if planner_action and planner_action.next_question else prompt
-            if field_name == "rank_or_score" and dossier.rank is None and dossier.score is None:
-                return planner_action.next_question if planner_action and planner_action.next_question else prompt
-            if field_name == "subject_combination" and not dossier.subject_combination:
-                return planner_action.next_question if planner_action and planner_action.next_question else prompt
-            if field_name == "major_interests" and not dossier.major_interests:
-                return planner_action.next_question if planner_action and planner_action.next_question else prompt
-            if field_name == "budget" and dossier.family_constraints.annual_budget_cny is None:
-                return planner_action.next_question if planner_action and planner_action.next_question else prompt
-            if field_name == "decision_anchor" and not self._has_decision_anchor(dossier):
-                return planner_action.next_question if planner_action and planner_action.next_question else prompt
+        for field_name in FOLLOW_UP_PROMPTS:
+            if field_name not in readiness["missing_fields"]:
+                continue
+            if field_name == "preference_or_constraint":
+                continue
+            return self._fallback_followup_prompt(field_name)
         if readiness["missing_fields"]:
-            return f"我还差 {readiness['missing_labels'][0]}，补上这一项后我就能继续往下收敛。"
+            return self._fallback_followup_prompt(readiness["missing_fields"][0])
         return None
 
     def _build_assistant_message(
@@ -675,10 +845,18 @@ class SessionStateMachine:
         planner_action: PlannerAction | None,
         next_question: str | None,
     ) -> str:
-        guidance = self._guidance_before_recommendation(action, readiness, next_question)
+        guidance = None
+        if not (planner_action and planner_action.next_question):
+            guidance = self._guidance_before_recommendation(action, readiness, next_question)
         if guidance:
             return guidance
         if action in {"ask_followup", "confirm_constraints"}:
+            if planner_action and planner_action.reasoning_summary and next_question:
+                if next_question in planner_action.reasoning_summary:
+                    return planner_action.reasoning_summary
+                return f"{planner_action.reasoning_summary}\n\n{next_question}"
+            if planner_action and planner_action.reasoning_summary:
+                return planner_action.reasoning_summary
             return next_question or "我还需要再确认一项关键信息，然后才会进入正式推荐。"
         if planner_action and planner_action.reasoning_summary:
             return planner_action.reasoning_summary
@@ -702,6 +880,59 @@ class SessionStateMachine:
     def _is_negative_confirmation(self, content: str) -> bool:
         lowered = content.lower()
         return any(signal in content or signal in lowered for signal in NEGATIVE_RECOMMENDATION_SIGNALS)
+
+    def _should_offer_directional_guidance(
+        self,
+        *,
+        content: str,
+        planner_suggested_action: str | None,
+        readiness: dict[str, Any],
+    ) -> bool:
+        if readiness["conflicts"] or readiness["can_recommend"]:
+            return False
+        if planner_suggested_action in {"directional_guidance", "recommend", "refine_recommendation", "explain_reasoning"}:
+            return True
+        if self._looks_like_recommendation_request(content):
+            return True
+        guidance_markers = [
+            "先给方向",
+            "先看看方向",
+            "帮我先给方向",
+            "帮我看看",
+            "先给建议",
+            "先分析一下",
+            "先聊聊怎么选",
+        ]
+        return any(marker in content for marker in guidance_markers)
+
+    def _should_start_recommendation(
+        self,
+        *,
+        content: str,
+        planner_suggested_action: str | None,
+    ) -> bool:
+        if any(marker in content for marker in ["先确认", "确认一下", "先跟我确认", "先复述一遍"]):
+            return False
+        if planner_suggested_action in {"recommend", "refine_recommendation"}:
+            return True
+        return self._looks_like_recommendation_request(content)
+
+    def _should_confirm_before_recommendation(self, content: str) -> bool:
+        return any(marker in content for marker in ["先确认", "确认一下", "先跟我确认", "先复述一遍"])
+
+    def _fallback_followup_prompt(self, field_name: str) -> str:
+        label = MISSING_FIELD_LABELS.get(field_name, field_name)
+        if field_name == "rank_or_score":
+            return "现在最影响我继续收敛建议的是位次或分数，你先告诉我这项，我就能把方向判断再往前推一步。"
+        if field_name == "subject_combination":
+            return "现在最影响我继续判断的是选科组合。你直接告诉我具体组合，我就能把可选专业范围收得更准。"
+        if field_name == "major_interests":
+            return "现在最影响我继续判断的是专业兴趣。你先说一两个最偏向的方向，我会比机械追问更快给你建议。"
+        if field_name == "budget":
+            return "现在最影响排序的是学费预算。如果学费不是主要约束，你也可以直接告诉我“预算不是问题”。"
+        if field_name == "decision_anchor":
+            return "现在最影响最终排序的是你的家庭决策偏好。你更看重离家近、城市本身、接受调剂，还是整体偏稳或偏冲？"
+        return f"现在最影响我继续判断的是{label}，你先告诉我这项，我就能把建议再收一层。"
 
     def _merge_provenance(self, existing: dict[str, str], deterministic: dict[str, str], live: dict[str, str]) -> dict[str, str]:
         merged = dict(existing)
@@ -802,6 +1033,16 @@ class SessionStateMachine:
             return re.search(pattern, lowered) is not None
         return keyword in lowered or keyword in content
 
+    def _synthetic_school_id(self, school_name: str) -> str:
+        return f"web-school-{hashlib.sha1(school_name.encode('utf-8')).hexdigest()[:10]}"
+
+    def _synthetic_program_id(self, school_name: str, program_name: str) -> str:
+        key = f"{school_name}|{program_name}"
+        return f"web-program-{hashlib.sha1(key.encode('utf-8')).hexdigest()[:12]}"
+
+    def _web_source_id(self, url: str) -> str:
+        return f"web-src-{hashlib.sha1(url.encode('utf-8')).hexdigest()[:12]}"
+
     def _recommendation_fingerprint(self, dossier: StudentDossier) -> str:
         payload = json.dumps(
             {
@@ -821,6 +1062,30 @@ class SessionStateMachine:
 
     def _task_step(self, step: str, status: str, label: str) -> dict[str, str]:
         return {"step": step, "status": status, "label": label}
+
+    def _record_task_step(
+        self,
+        timeline: list[dict[str, Any]],
+        step: str,
+        status: str,
+        label: str,
+        *,
+        emit: callable | None = None,
+    ) -> None:
+        payload = self._task_step(step, status, label)
+        timeline.append(payload)
+        if emit is not None:
+            emit("task_step", payload)
+
+    def _extend_context_task_steps(
+        self,
+        timeline: list[dict[str, Any]],
+        context_slice: dict[str, Any],
+        *,
+        emit: callable | None = None,
+    ) -> None:
+        for step in self._context_task_steps(context_slice):
+            self._record_task_step(timeline, step["step"], step["status"], step["label"], emit=emit)
 
     def _context_task_steps(self, context_slice: dict[str, Any]) -> list[dict[str, str]]:
         steps = [self._task_step("retrieve", "completed", "正在检索已发布知识")]
@@ -880,7 +1145,7 @@ class SessionStateMachine:
         )
 
     def _build_directional_guidance(self, dossier: StudentDossier, readiness: dict[str, Any], user_message: str) -> tuple[str, dict[str, Any]]:
-        knowledge_slice = self._retrieve_knowledge_slice(dossier, user_message)
+        knowledge_slice = self._retrieve_knowledge_slice(dossier, user_message, strict_subject_match=False)
         if self.planner_client is not None and self.planner_client.is_configured():
             live_guidance = self.planner_client.generate_directional_guidance(
                 dossier=dossier.model_dump(),
@@ -1045,6 +1310,25 @@ class SessionStateMachine:
         if budget_match:
             constraints.annual_budget_cny = int(budget_match.group(2))
             provenance["family_constraints.annual_budget_cny"] = "deterministic_regex"
+        if constraints.annual_budget_cny is None and any(
+            token in content
+            for token in [
+                "没有预算",
+                "预算不是问题",
+                "学费不是问题",
+                "学费没有预算",
+                "预算没限制",
+                "预算不限",
+                "家庭条件还好",
+                "家里条件还好",
+                "家庭条件还可以",
+                "家里条件还可以",
+                "家里条件不错",
+                "家庭条件不错",
+            ]
+        ):
+            constraints.notes.append("budget unconstrained")
+            provenance["family_constraints.notes"] = "deterministic_keyword_match"
         if constraints.annual_budget_cny is None and any(token in content for token in ["家里条件一般", "普通家庭", "预算很低", "预算不高", "学费预算很低"]):
             constraints.notes.append("family mentioned budget sensitivity")
             constraints.annual_budget_cny = 6000

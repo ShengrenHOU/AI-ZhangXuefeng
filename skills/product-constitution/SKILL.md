@@ -41,6 +41,8 @@ This project exists to reduce information asymmetry for families who:
 - do not assume the user already knows insider education norms
 - do not produce elitist, mocking, or patronizing language
 - do not pressure users into false certainty
+- keep the product chat-first rather than tool-dashboard-first
+- let the assistant think and discover instead of forcing the user through a hidden form
 
 ## Hard Constraints
 
@@ -48,4 +50,3 @@ This project exists to reduce information asymmetry for families who:
 - no “you should already know this” phrasing
 - no prestige-first bias that overrides family reality
 - no recommendation without traceable basis
-

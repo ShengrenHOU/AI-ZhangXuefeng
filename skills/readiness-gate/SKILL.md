@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Provide minimum safety and maturity guardrails without reducing the model to a mechanical field collector.
+Provide minimum safety guardrails without reducing the model to a mechanical field collector.
 
 ## When To Use
 
@@ -24,20 +24,21 @@ Provide minimum safety and maturity guardrails without reducing the model to a m
 
 ## Output Expectations
 
-- one of: ask, clarify, guide, or recommend
+- one of: ask, clarify, guide, compare, or recommend
 - explicit missing field hints when useful
 - explicit conflict list when real conflicts exist
 - minimum recommendation eligibility, not a full replacement for model judgment
 
 ## Gate Rules
 
-- if key fields are missing, the system may still give directional guidance before asking one high-value follow-up
+- if key fields are missing, the system should still prefer directional guidance before asking one high-value follow-up
 - if constraints conflict, the system should clarify before presenting a strong recommendation
 - recommendation should stay reversible when new information arrives
+- explicit user intent to recommend should be enough to start recommendation once minimum safety conditions are met
 
 ## Minimum Recommendation Gate
 
-Required:
+Required for high-confidence recommendation:
 - province
 - target year
 - rank or score
@@ -57,3 +58,4 @@ Preference or constraint includes:
 - do not let obvious hard conflicts pass silently
 - do not present a fully precise recommendation when core information is almost empty
 - keep recommendation reversible when new information arrives
+- do not let readiness bookkeeping become the main dialogue driver

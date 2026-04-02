@@ -19,9 +19,7 @@ class ReadinessResponse(BaseModel):
     conflicts: list[ConflictNoticeResponse]
 
 
-class SessionStartResponse(BaseModel):
-    thread_id: str
-    state: str
+class SessionStatePayload(BaseModel):
     dossier: StudentDossier
     readiness: ReadinessResponse
     pending_recommendation_confirmation: bool
@@ -29,60 +27,33 @@ class SessionStartResponse(BaseModel):
     recommendation: RecommendationRun | None = None
     recommendation_versions: list[dict] = Field(default_factory=list)
     task_timeline: list[dict] = Field(default_factory=list)
-    recommendation_versions: list[dict] = Field(default_factory=list)
-    task_timeline: list[dict] = Field(default_factory=list)
-    recommendation_versions: list[dict] = Field(default_factory=list)
-    task_timeline: list[dict] = Field(default_factory=list)
-    recommendation_versions: list[dict] = Field(default_factory=list)
-    task_timeline: list[dict] = Field(default_factory=list)
 
 
-class SessionSnapshotResponse(BaseModel):
+class SessionStartResponse(SessionStatePayload):
     thread_id: str
     state: str
-    dossier: StudentDossier
+
+
+class SessionSnapshotResponse(SessionStatePayload):
+    thread_id: str
+    state: str
     messages: list[dict]
-    readiness: ReadinessResponse
-    pending_recommendation_confirmation: bool
-    field_provenance: dict[str, str]
-    recommendation: RecommendationRun | None = None
-    recommendation_versions: list[dict] = Field(default_factory=list)
-    task_timeline: list[dict] = Field(default_factory=list)
-    recommendation_versions: list[dict] = Field(default_factory=list)
-    task_timeline: list[dict] = Field(default_factory=list)
-    recommendation_versions: list[dict] = Field(default_factory=list)
-    task_timeline: list[dict] = Field(default_factory=list)
-    recommendation_versions: list[dict] = Field(default_factory=list)
-    task_timeline: list[dict] = Field(default_factory=list)
 
 
 class ChatMessageRequest(BaseModel):
     content: str = Field(min_length=1)
 
 
-class ChatMessageResponse(BaseModel):
+class ChatMessageResponse(SessionStatePayload):
     thread_id: str
     state: str
     assistant_message: str
-    dossier: StudentDossier
     model_action: dict
-    readiness: ReadinessResponse
-    pending_recommendation_confirmation: bool
-    field_provenance: dict[str, str]
-    recommendation: RecommendationRun | None = None
-    recommendation_versions: list[dict] = Field(default_factory=list)
-    task_timeline: list[dict] = Field(default_factory=list)
-    recommendation_versions: list[dict] = Field(default_factory=list)
-    task_timeline: list[dict] = Field(default_factory=list)
 
 
 class StreamMessageResponse(BaseModel):
     event: str
     payload: dict
-    recommendation_versions: list[dict] = Field(default_factory=list)
-    task_timeline: list[dict] = Field(default_factory=list)
-    recommendation_versions: list[dict] = Field(default_factory=list)
-    task_timeline: list[dict] = Field(default_factory=list)
 
 
 class ComparePayload(BaseModel):

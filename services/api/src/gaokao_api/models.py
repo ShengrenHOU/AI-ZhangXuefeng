@@ -32,3 +32,25 @@ class FeedbackModel(Base):
     rating: Mapped[str] = mapped_column(String(16))
     comment: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
+
+
+class DraftKnowledgeRecordModel(Base):
+    __tablename__ = "draft_knowledge_records"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    draft_id: Mapped[str] = mapped_column(String(96), unique=True, index=True)
+    thread_id: Mapped[str] = mapped_column(String(64))
+    province: Mapped[str] = mapped_column(String(32))
+    target_year: Mapped[int] = mapped_column(Integer)
+    school_name: Mapped[str] = mapped_column(String(256))
+    program_name: Mapped[str] = mapped_column(String(256))
+    source_title: Mapped[str] = mapped_column(String(512))
+    source_url: Mapped[str] = mapped_column(Text)
+    source_domain: Mapped[str] = mapped_column(String(256))
+    evidence_summary: Mapped[str] = mapped_column(Text)
+    tuition_cny: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    historical_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    subject_requirements: Mapped[list] = mapped_column(JSON, default=list)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(16), default="draft")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))

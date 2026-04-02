@@ -40,7 +40,7 @@ const BUCKET_LABELS: Record<RecommendationBucket, string> = {
 const READINESS_TEXT: Record<ReadinessLevel, string> = {
   insufficient_info: "信息还不够，先继续聊清楚",
   near_ready: "已经接近可以推荐，再补一点就够了",
-  ready_for_recommendation: "你的核心条件已经比较完整，我会先请你确认一遍再正式推荐。",
+  ready_for_recommendation: "你的核心条件已经比较完整，可以开始正式推荐了。",
 };
 
 const THREAD_LABELS = {
@@ -109,13 +109,14 @@ function completenessSummary(dossier: UiDossier | null) {
   if (!dossier) {
     return `0/${MINIMUM_KEYS.length} 项核心条件已到位`;
   }
+  const budgetUnconstrained = dossier.familyConstraints?.notes?.includes("budget unconstrained");
   const complete = MINIMUM_KEYS.filter((key) => {
     if (key === "province") return Boolean(dossier.province);
     if (key === "target_year") return Boolean(dossier.targetYear);
     if (key === "rank_or_score") return dossier.rank != null || dossier.score != null;
     if (key === "subject_combination") return Boolean(dossier.subjectCombination?.length);
     if (key === "major_interests") return Boolean(dossier.majorInterests?.length);
-    if (key === "budget") return dossier.familyConstraints?.annualBudgetCny != null;
+    if (key === "budget") return dossier.familyConstraints?.annualBudgetCny != null || budgetUnconstrained;
     if (key === "decision_anchor") {
       return Boolean(
         dossier.familyConstraints?.distancePreference ||
@@ -142,6 +143,7 @@ function buildConfirmedChips(dossier: UiDossier | null, readiness: UiReadiness) 
   if (dossier.subjectCombination?.length) chips.push(`选科：${dossier.subjectCombination.map(subjectLabel).join("、")}`);
   if (dossier.majorInterests?.length) chips.push(`倾向：${dossier.majorInterests.map(interestLabel).join("、")}`);
   if (dossier.familyConstraints?.annualBudgetCny != null) chips.push(`预算：${dossier.familyConstraints.annualBudgetCny} 元/年`);
+  else if (dossier.familyConstraints?.notes?.includes("budget unconstrained")) chips.push("预算：学费不是主要约束");
   if (dossier.familyConstraints?.distancePreference === "near_home") chips.push("希望离家近");
   if (dossier.familyConstraints?.distancePreference === "nationwide") chips.push("全国都可");
   if (dossier.familyConstraints?.adjustmentAccepted === true) chips.push("接受调剂");
@@ -232,52 +234,80 @@ function ResultCard({ item }: { item: RecommendationItem }) {
   );
 }
 
-function FollowUpCard({ readiness, nextQuestion }: { readiness: UiReadiness; nextQuestion?: string | null }) {
+function SuggestionRail({
+  items,
+  versions,
+  confirmedChips,
+  taskTimeline,
+  dossier,
+}: {
+  items: RecommendationItem[];
+  versions: UiRecommendationVersion[];
+  confirmedChips: string[];
+  taskTimeline: UiTaskStep[];
+  dossier: UiDossier | null;
+}) {
+  const currentVersion = versions[0] ?? null;
+  const previousVersion = versions[1] ?? null;
+  const grouped = {
+    reach: items.filter((item) => item.bucket === "reach"),
+    match: items.filter((item) => item.bucket === "match"),
+    safe: items.filter((item) => item.bucket === "safe"),
+  };
+
   return (
-    <div className="assistant-card followup-card">
-      <div className="assistant-card-title">还需要继续确认</div>
-      <p>{nextQuestion ?? "我还需要补几项信息，才能开始正式推荐。"}</p>
-      {readiness.missingLabels.length > 0 ? (
-        <div className="chip-row" style={{ marginTop: 12 }}>
-          {readiness.missingLabels.map((label) => (
-            <span className="chip neutral" key={label}>
-              待补充：{label}
+    <section className="summary-strip panel compact">
+      <div className="summary-strip-head compact">
+        <div>
+          <div className="section-title">当前志愿清单</div>
+          <span className="section-desc">
+            {previousVersion ? "这版清单已经按你最新补充的条件重排。" : "后面你继续补条件，我会在原地帮你重排整份清单。"}
+          </span>
+        </div>
+        <span className="chip neutral">当前 {items.length} 项</span>
+      </div>
+
+      <div className="chip-row" style={{ marginBottom: 12 }}>
+        {currentVersion ? <span className="chip neutral">当前版本</span> : null}
+        {previousVersion ? <span className="chip neutral">上一版本</span> : null}
+        {dossier?.province ? <span className="chip neutral">省份：{dossier.province === "henan" ? "河南" : dossier.province}</span> : null}
+      </div>
+
+      <div className="inline-results" style={{ marginBottom: 16 }}>
+        {(["reach", "match", "safe"] as RecommendationBucket[]).map((bucket) =>
+          grouped[bucket].length > 0 ? (
+            <div key={`rail-group-${bucket}`}>
+              <div className="assistant-card-title" style={{ marginBottom: 10 }}>
+                {BUCKET_LABELS[bucket]}档志愿
+              </div>
+              <div className="rail-list">
+                {grouped[bucket].map((item) => (
+                  <ResultCard item={item} key={`rail-${bucket}-${item.programId}`} />
+                ))}
+              </div>
+            </div>
+          ) : null,
+        )}
+      </div>
+
+      <div className="summary-section">
+        <label>已确认条件摘要</label>
+        <div className="chip-row">
+          {confirmedChips.map((chip) => (
+            <span className="chip neutral" key={chip}>
+              {chip}
             </span>
           ))}
         </div>
-      ) : null}
-    </div>
-  );
-}
-
-function RecommendationSummaryBar({ items, versions }: { items: RecommendationItem[]; versions: UiRecommendationVersion[] }) {
-  return (
-    <section className="recommendation-overview panel">
-      <div className="recommendation-overview-head">
-        <div>
-          <div className="assistant-name">当前 shortlist</div>
-          <p className="section-desc">推荐已经生成了。后面你继续补条件，我会在原地帮你重排。</p>
-        </div>
-        {versions.length > 0 ? (
-          <div className="chip-row">
-            {versions.map((version) => (
-              <span className="chip neutral" key={version.traceId}>
-                {version.label}
-              </span>
-            ))}
-          </div>
-        ) : null}
       </div>
-      <div className="overview-row">
-        {items.slice(0, 3).map((item) => (
-          <div className="overview-pill" key={item.programId}>
-            <span className={`bucket ${item.bucket}`}>{BUCKET_LABELS[item.bucket]}</span>
-            <div>
-              <strong>{item.schoolName}</strong>
-              <span>{item.programName}</span>
-            </div>
-          </div>
-        ))}
+
+      <div className="summary-section">
+        <label>当前工作轨迹</label>
+        <div className="shortcut-links">
+          {taskTimeline.map((step) => (
+            <span key={`${step.step}-${step.label}`}>{step.label}</span>
+          ))}
+        </div>
       </div>
     </section>
   );
@@ -472,7 +502,7 @@ export function ChatShell() {
         </div>
         {error ? <p className="error-text">{error}</p> : null}
 
-        {items.length > 0 ? <RecommendationSummaryBar items={items} versions={recommendationVersions} /> : null}
+        {null}
 
         <div className="chat-list">
           {messages.length === 0 ? (
@@ -484,15 +514,13 @@ export function ChatShell() {
 
           {messages.map((message, index) => {
             const isLastAssistant = message.role === "assistant" && index === messages.length - 1;
-            const shouldCollapseIntoCard = isLastAssistant && lastAction === "ask_followup" && Boolean(lastNextQuestion);
             return (
               <div className={`message ${message.role}`} key={`${message.role}-${index}-${message.content}`}>
                 <div className="message-role">{THREAD_LABELS[message.role as "assistant" | "user"]}</div>
-                {!shouldCollapseIntoCard ? <div className="message-content">{message.content}</div> : null}
-                {isLastAssistant && lastAction === "ask_followup" ? <FollowUpCard readiness={readinessView} nextQuestion={lastNextQuestion} /> : null}
-                {isLastAssistant && items.length > 0 && (lastAction === "explain_results" || lastAction === "compare_options") ? (
+                <div className="message-content">{message.content}</div>
+                {isLastAssistant && lastAction === "compare_options" ? (
                   <div className="inline-results">
-                    <div className="assistant-card-title">{lastAction === "compare_options" ? "比较结果" : "当前建议"}</div>
+                    <div className="assistant-card-title">比较结果</div>
                     <div className="inline-bucket-summary">
                       {(["reach", "match", "safe"] as RecommendationBucket[]).map((bucket) => (
                         <span className={`bucket-summary ${bucket}`} key={bucket}>
@@ -545,21 +573,33 @@ export function ChatShell() {
       </section>
 
       <section className="summary-strip panel compact">
-        <div className="summary-strip-head compact">
-          <div>
-            <div className="section-title">当前已确认信息</div>
-            <span className="section-desc">默认只保留摘要，不再占据大块首屏空间。</span>
-          </div>
-          <span className="chip neutral">{completenessSummary(dossier)}</span>
-        </div>
-        <div className="chip-row">
-          {confirmedChips.length === 0 ? <span className="chip neutral">你继续聊天，我会在这里同步更新已确认条件。</span> : null}
-          {confirmedChips.map((chip) => (
-            <span className="chip neutral" key={chip}>
-              {chip}
-            </span>
-          ))}
-        </div>
+        {items.length > 0 ? (
+          <SuggestionRail
+            items={items}
+            versions={recommendationVersions}
+            confirmedChips={confirmedChips}
+            taskTimeline={taskTimeline}
+            dossier={dossier}
+          />
+        ) : (
+          <>
+            <div className="summary-strip-head compact">
+              <div>
+                <div className="section-title">当前已确认信息</div>
+                <span className="section-desc">默认只保留摘要，不再占据大块首屏空间。</span>
+              </div>
+              <span className="chip neutral">{completenessSummary(dossier)}</span>
+            </div>
+            <div className="chip-row">
+              {confirmedChips.length === 0 ? <span className="chip neutral">你继续聊天，我会在这里同步更新已确认条件。</span> : null}
+              {confirmedChips.map((chip) => (
+                <span className="chip neutral" key={chip}>
+                  {chip}
+                </span>
+              ))}
+            </div>
+          </>
+        )}
 
         <div className="summary-section">
           <label>当前工作轨迹</label>

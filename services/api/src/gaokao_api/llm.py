@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import re
+import uuid
 from collections.abc import Iterator
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 from openai import OpenAI
 from pydantic import BaseModel, Field, ValidationError
@@ -51,6 +54,46 @@ class RetrievalPlan(BaseModel):
     queries: list[str] = Field(default_factory=list)
 
 
+class DiscoveredCandidate(BaseModel):
+    school_id: str = ""
+    program_id: str = ""
+    school_name: str
+    program_name: str
+    city: str
+    tuition_cny: int | None = None
+    subject_requirements: list[str] = Field(default_factory=list)
+    historical_rank: int | None = None
+    tags: list[str] = Field(default_factory=list)
+    source_ids: list[str] = Field(default_factory=list)
+    evidence_summary: str
+    source_urls: list[str] = Field(default_factory=list)
+    source_summaries: list[dict[str, Any]] = Field(default_factory=list)
+    retrieval_score: float = 0.0
+
+
+class CandidateDiscoveryResult(BaseModel):
+    reasoning_summary: str
+    candidates: list[DiscoveredCandidate] = Field(default_factory=list)
+
+
+class DraftKnowledgePayload(BaseModel):
+    draft_id: str
+    thread_id: str
+    province: str
+    target_year: int
+    school_name: str
+    program_name: str
+    source_title: str
+    source_url: str
+    source_domain: str
+    evidence_summary: str
+    tuition_cny: int | None = None
+    historical_rank: int | None = None
+    subject_requirements: list[str] = Field(default_factory=list)
+    payload: dict[str, Any] = Field(default_factory=dict)
+    status: str = "draft"
+
+
 class SafetyStyleGuardResult(BaseModel):
     approved: bool = True
     revision_notes: list[str] = Field(default_factory=list)
@@ -62,15 +105,9 @@ class CompareResultPayload(BaseModel):
 
 
 class ArkCodingPlanClient:
-    """
-    Live planner and recommendation adapter for Ark's OpenAI-compatible endpoint.
-    Runtime behavior is defined by promptpacks rather than hard-coded prompt strings.
-    """
-
     def __init__(self) -> None:
         self.instant_model = settings.ark_instant_model or settings.ark_model
         self.deepthink_model = settings.ark_deepthink_model or settings.ark_model
-        self.model = self.instant_model
         self.base_url = settings.ark_base_url
         self.schemas = StructuredOutputSchemas()
         self.promptpacks = RuntimePromptRegistry(
@@ -96,11 +133,11 @@ class ArkCodingPlanClient:
     ) -> PlannerAction | None:
         if self._client is None:
             return None
-
         messages = [
             {
                 "role": "system",
-                "content": self._intent_router_prompt(
+                "content": self.promptpacks.render(
+                    "intent_router",
                     dossier=dossier,
                     missing_fields=missing_fields,
                     conflicts=conflicts,
@@ -122,39 +159,10 @@ class ArkCodingPlanClient:
                 ),
             },
         ]
+        return self._json_chat(messages, PlannerAction, model=self.instant_model, max_tokens=420, temperature=0.15)
 
-        completion = self._client.chat.completions.create(
-            model=self.instant_model,
-            messages=messages,
-            max_completion_tokens=420,
-            temperature=0.15,
-            top_p=0.9,
-            stream=False,
-            response_format={"type": "json_object"},
-        )
-        raw_content = completion.choices[0].message.content or "{}"
-        try:
-            parsed = self._parse_json_payload(raw_content)
-            return PlannerAction.model_validate(parsed)
-        except (json.JSONDecodeError, ValidationError):
-            return None
-
-    def plan_turn(
-        self,
-        *,
-        dossier: dict[str, Any],
-        user_message: str,
-        missing_fields: list[str],
-        conflicts: list[dict[str, Any]],
-        readiness_level: str,
-    ) -> PlannerAction | None:
-        return self.plan_conversation_action(
-            dossier=dossier,
-            user_message=user_message,
-            missing_fields=missing_fields,
-            conflicts=conflicts,
-            readiness_level=readiness_level,
-        )
+    def plan_turn(self, **kwargs: Any) -> PlannerAction | None:
+        return self.plan_conversation_action(**kwargs)
 
     def update_dossier_patch(
         self,
@@ -165,7 +173,6 @@ class ArkCodingPlanClient:
     ) -> dict[str, Any]:
         if self._client is None:
             return {}
-
         messages = [
             {
                 "role": "system",
@@ -188,25 +195,12 @@ class ArkCodingPlanClient:
                 ),
             },
         ]
-
-        completion = self._client.chat.completions.create(
-            model=self.instant_model,
-            messages=messages,
-            max_completion_tokens=320,
-            temperature=0.1,
-            top_p=0.9,
-            stream=False,
-            response_format={"type": "json_object"},
-        )
-        raw_content = completion.choices[0].message.content or "{}"
-        try:
-            parsed = self._parse_json_payload(raw_content)
-        except json.JSONDecodeError:
+        payload = self._json_chat(messages, dict, model=self.instant_model, max_tokens=320, temperature=0.1)
+        if not payload:
             return {}
-
-        if isinstance(parsed.get("dossier_patch"), dict):
-            return parsed["dossier_patch"]
-        return parsed if isinstance(parsed, dict) else {}
+        if isinstance(payload.get("dossier_patch"), dict):
+            return payload["dossier_patch"]
+        return payload
 
     def retrieve_queries(
         self,
@@ -215,8 +209,7 @@ class ArkCodingPlanClient:
         user_message: str,
     ) -> RetrievalPlan:
         if self._client is None:
-            return self._fallback_retrieval_plan(dossier=dossier, user_message=user_message)
-
+            return self._fallback_retrieval_plan(dossier)
         task_plan = {"goal": "retrieve_relevant_context", "priority": "published_knowledge_then_open_web"}
         messages = [
             {
@@ -240,27 +233,12 @@ class ArkCodingPlanClient:
                 ),
             },
         ]
-
-        completion = self._client.chat.completions.create(
-            model=self.instant_model,
-            messages=messages,
-            max_completion_tokens=260,
-            temperature=0.1,
-            top_p=0.9,
-            stream=False,
-            response_format={"type": "json_object"},
-        )
-        raw_content = completion.choices[0].message.content or "{}"
-        try:
-            parsed = self._parse_json_payload(raw_content)
-            plan = RetrievalPlan.model_validate(parsed)
-            sanitized_queries = self._sanitize_external_queries(plan.queries, dossier=dossier)
-            if sanitized_queries:
-                return RetrievalPlan(queries=sanitized_queries)
-        except (json.JSONDecodeError, ValidationError):
-            pass
-
-        return self._fallback_retrieval_plan(dossier=dossier, user_message=user_message)
+        plan = self._json_chat(messages, RetrievalPlan, model=self.instant_model, max_tokens=260, temperature=0.1)
+        if plan and plan.queries:
+            sanitized = self._sanitize_external_queries(plan.queries, dossier=dossier)
+            if sanitized:
+                return RetrievalPlan(queries=sanitized)
+        return self._fallback_retrieval_plan(dossier)
 
     def generate_directional_guidance(
         self,
@@ -273,7 +251,6 @@ class ArkCodingPlanClient:
     ) -> str | None:
         if self._client is None:
             return None
-
         messages = [
             {
                 "role": "system",
@@ -300,7 +277,6 @@ class ArkCodingPlanClient:
                 ),
             },
         ]
-
         completion = self._client.chat.completions.create(
             model=self.instant_model,
             messages=messages,
@@ -312,6 +288,72 @@ class ArkCodingPlanClient:
         content = completion.choices[0].message.content
         return content.strip() if content else None
 
+    def discover_candidates_via_web(
+        self,
+        *,
+        thread_id: str,
+        dossier: dict[str, Any],
+        user_message: str,
+        retrieved_knowledge: dict[str, Any],
+        fallback_web_results: list[dict[str, Any]],
+    ) -> CandidateDiscoveryResult:
+        if self._client is None or not settings.enable_web_retrieval:
+            return CandidateDiscoveryResult(reasoning_summary="web discovery disabled", candidates=[])
+
+        native = self._discover_candidates_via_native_web_search(
+            thread_id=thread_id,
+            dossier=dossier,
+            user_message=user_message,
+            retrieved_knowledge=retrieved_knowledge,
+        )
+        if native and native.candidates:
+            return native
+        if not fallback_web_results:
+            return CandidateDiscoveryResult(reasoning_summary="no fallback web results", candidates=[])
+        return self._discover_candidates_via_fallback_web_context(
+            thread_id=thread_id,
+            dossier=dossier,
+            user_message=user_message,
+            retrieved_knowledge=retrieved_knowledge,
+        )
+
+    def extract_web_evidence_for_draft(
+        self,
+        *,
+        thread_id: str,
+        dossier: dict[str, Any],
+        discovered: CandidateDiscoveryResult,
+    ) -> list[dict[str, Any]]:
+        if not settings.enable_draft_writeback:
+            return []
+        province = str(dossier.get("province") or settings.province)
+        target_year = int(dossier.get("target_year") or settings.target_year)
+        records: list[dict[str, Any]] = []
+        for candidate in discovered.candidates:
+            source_url = candidate.source_urls[0] if candidate.source_urls else ""
+            source_domain = self._source_domain(source_url)
+            source_title = candidate.source_summaries[0]["title"] if candidate.source_summaries else f"{candidate.school_name} {candidate.program_name}"
+            digest = hashlib.sha1(f"{thread_id}:{candidate.program_id}:{source_url}".encode("utf-8")).hexdigest()[:12]
+            records.append(
+                DraftKnowledgePayload(
+                    draft_id=f"draft-{province}-{target_year}-{digest}",
+                    thread_id=thread_id,
+                    province=province,
+                    target_year=target_year,
+                    school_name=candidate.school_name,
+                    program_name=candidate.program_name,
+                    source_title=source_title,
+                    source_url=source_url,
+                    source_domain=source_domain,
+                    evidence_summary=candidate.evidence_summary,
+                    tuition_cny=candidate.tuition_cny,
+                    historical_rank=candidate.historical_rank,
+                    subject_requirements=candidate.subject_requirements,
+                    payload=candidate.model_dump(),
+                ).model_dump()
+            )
+        return records
+
     def recommend_from_knowledge(
         self,
         *,
@@ -320,11 +362,11 @@ class ArkCodingPlanClient:
     ) -> RecommendationSelection | None:
         if self._client is None:
             return None
-
-        base_messages = [
+        messages = [
             {
                 "role": "system",
-                "content": self._recommendation_prompt(
+                "content": self.promptpacks.render(
+                    "recommendation_generator",
                     dossier=dossier,
                     retrieved_knowledge=retrieved_knowledge,
                 ),
@@ -340,43 +382,10 @@ class ArkCodingPlanClient:
                 ),
             },
         ]
+        return self._json_chat(messages, RecommendationSelection, model=self.deepthink_model, max_tokens=1400, temperature=0.2)
 
-        for attempt in range(2):
-            messages = list(base_messages)
-            if attempt == 1:
-                messages.insert(
-                    1,
-                    {
-                        "role": "system",
-                        "content": "请只输出一个 JSON 对象，不要使用 markdown 代码块，也不要输出对象之外的额外解释。",
-                    },
-                )
-
-            completion = self._client.chat.completions.create(
-                model=self.deepthink_model,
-                messages=messages,
-                max_completion_tokens=1400,
-                temperature=0.2 if attempt == 0 else 0.1,
-                top_p=0.9,
-                stream=False,
-                response_format={"type": "json_object"},
-            )
-            raw_content = completion.choices[0].message.content or "{}"
-            try:
-                parsed = self._parse_json_payload(raw_content)
-                return RecommendationSelection.model_validate(parsed)
-            except (json.JSONDecodeError, ValidationError):
-                continue
-
-        return None
-
-    def generate_recommendation(
-        self,
-        *,
-        dossier: dict[str, Any],
-        retrieved_knowledge: dict[str, Any],
-    ) -> RecommendationSelection | None:
-        return self.recommend_from_knowledge(dossier=dossier, retrieved_knowledge=retrieved_knowledge)
+    def generate_recommendation(self, **kwargs: Any) -> RecommendationSelection | None:
+        return self.recommend_from_knowledge(**kwargs)
 
     def stream_recommendation_text(
         self,
@@ -386,14 +395,15 @@ class ArkCodingPlanClient:
     ) -> Iterator[str]:
         if self._client is None:
             return iter(())
-
         messages = [
             {
                 "role": "system",
-                "content": self._recommendation_stream_prompt(
+                "content": self.promptpacks.render(
+                    "recommendation_generator",
                     dossier=dossier,
                     retrieved_knowledge=retrieved_knowledge,
-                ),
+                )
+                + "\n\n请把建议写成面向家长和学生的自然语言说明，逐步展开，不要输出 JSON。",
             },
             {
                 "role": "user",
@@ -406,7 +416,6 @@ class ArkCodingPlanClient:
                 ),
             },
         ]
-
         stream = self._client.chat.completions.create(
             model=self.deepthink_model,
             messages=messages,
@@ -433,11 +442,11 @@ class ArkCodingPlanClient:
     ) -> CompareResultPayload | None:
         if self._client is None:
             return None
-
         messages = [
             {
                 "role": "system",
-                "content": self._compare_prompt(
+                "content": self.promptpacks.render(
+                    "compare_generator",
                     dossier=dossier,
                     left_option=left_option,
                     right_option=right_option,
@@ -455,22 +464,7 @@ class ArkCodingPlanClient:
                 ),
             },
         ]
-
-        completion = self._client.chat.completions.create(
-            model=self.instant_model,
-            messages=messages,
-            max_completion_tokens=600,
-            temperature=0.15,
-            top_p=0.9,
-            stream=False,
-            response_format={"type": "json_object"},
-        )
-        raw_content = completion.choices[0].message.content or "{}"
-        try:
-            parsed = self._parse_json_payload(raw_content)
-            return CompareResultPayload.model_validate(parsed)
-        except (json.JSONDecodeError, ValidationError):
-            return None
+        return self._json_chat(messages, CompareResultPayload, model=self.instant_model, max_tokens=600, temperature=0.15)
 
     def summarize_for_family(
         self,
@@ -480,11 +474,11 @@ class ArkCodingPlanClient:
     ) -> str | None:
         if self._client is None:
             return None
-
         messages = [
             {
                 "role": "system",
-                "content": self._family_summary_prompt(
+                "content": self.promptpacks.render(
+                    "family_summary_writer",
                     dossier=dossier,
                     recommendation=recommendation,
                 ),
@@ -516,7 +510,6 @@ class ArkCodingPlanClient:
     ) -> str:
         if self._client is None or not draft_output.strip():
             return draft_output
-
         messages = [
             {
                 "role": "system",
@@ -539,25 +532,10 @@ class ArkCodingPlanClient:
                 ),
             },
         ]
-        completion = self._client.chat.completions.create(
-            model=self.instant_model,
-            messages=messages,
-            max_completion_tokens=220,
-            temperature=0.1,
-            top_p=0.9,
-            stream=False,
-            response_format={"type": "json_object"},
-        )
-        raw_content = completion.choices[0].message.content or "{}"
-        try:
-            parsed = SafetyStyleGuardResult.model_validate(self._parse_json_payload(raw_content))
-        except (json.JSONDecodeError, ValidationError):
+        result = self._json_chat(messages, SafetyStyleGuardResult, model=self.instant_model, max_tokens=220, temperature=0.1)
+        if not result or result.approved or not result.revision_notes:
             return draft_output
-
-        if parsed.approved or not parsed.revision_notes:
-            return draft_output
-
-        rewrite = self._client.chat.completions.create(
+        rewrite = self._chat_text(
             model=self.instant_model,
             messages=[
                 {
@@ -572,7 +550,7 @@ class ArkCodingPlanClient:
                     "content": json.dumps(
                         {
                             "draft_output": draft_output,
-                            "revision_notes": parsed.revision_notes,
+                            "revision_notes": result.revision_notes,
                             "model_action": model_action,
                             "user_context": user_context,
                         },
@@ -582,84 +560,185 @@ class ArkCodingPlanClient:
             ],
             max_completion_tokens=420,
             temperature=0.15,
+        )
+        return rewrite.strip() if rewrite else draft_output
+
+    def _chat_text(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        max_completion_tokens: int,
+        temperature: float,
+    ) -> str | None:
+        if self._client is None:
+            return None
+        completion = self._client.chat.completions.create(
+            model=model,
+            messages=messages,
+            max_completion_tokens=max_completion_tokens,
+            temperature=temperature,
             top_p=0.9,
             stream=False,
         )
-        revised = rewrite.choices[0].message.content
-        return revised.strip() if revised else draft_output
+        content = completion.choices[0].message.content
+        return content.strip() if content else None
 
-    def _intent_router_prompt(
+    def _discover_candidates_via_native_web_search(
         self,
         *,
+        thread_id: str,
         dossier: dict[str, Any],
-        missing_fields: list[str],
-        conflicts: list[dict[str, Any]],
-        readiness_level: str,
         user_message: str,
-    ) -> str:
-        return self.promptpacks.render(
-            "intent_router",
-            dossier=dossier,
-            missing_fields=missing_fields,
-            conflicts=conflicts,
-            readiness_level=readiness_level,
-            user_message=user_message,
-        )
-
-    def _recommendation_prompt(
-        self,
-        *,
-        dossier: dict[str, Any],
         retrieved_knowledge: dict[str, Any],
-    ) -> str:
-        return self.promptpacks.render(
-            "recommendation_generator",
-            dossier=dossier,
-            retrieved_knowledge=retrieved_knowledge,
-        )
-
-    def _recommendation_stream_prompt(
-        self,
-        *,
-        dossier: dict[str, Any],
-        retrieved_knowledge: dict[str, Any],
-    ) -> str:
-        return (
-            self.promptpacks.render(
-                "recommendation_generator",
-                dossier=dossier,
-                retrieved_knowledge=retrieved_knowledge,
+    ) -> CandidateDiscoveryResult:
+        if self._client is None or not settings.prefer_native_web_search:
+            return CandidateDiscoveryResult(reasoning_summary="native web search disabled", candidates=[])
+        try:
+            response = self._client.responses.create(
+                model=self.deepthink_model,
+                input=[
+                    {
+                        "role": "system",
+                        "content": [
+                            {
+                                "type": "input_text",
+                                "text": (
+                                    "你是高考志愿助手的候选发现层。请使用 web search 寻找与用户条件相关的学校和专业候选。"
+                                    "最后只输出 JSON，对象键为 reasoning_summary 和 candidates。"
+                                ),
+                            }
+                        ],
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_text",
+                                "text": json.dumps(
+                                    {
+                                        "thread_id": thread_id,
+                                        "dossier": dossier,
+                                        "user_message": user_message,
+                                        "retrieved_knowledge": retrieved_knowledge,
+                                    },
+                                    ensure_ascii=False,
+                                ),
+                            }
+                        ],
+                    },
+                ],
+                tools=[{"type": "web_search_preview"}],
             )
-            + "\n\n请把建议写成面向家长和学生的自然语言说明，逐步展开，不要输出 JSON，也不要暴露工程字段。"
-        )
+            text = self._response_output_text(response)
+            if not text:
+                return CandidateDiscoveryResult(reasoning_summary="native web search returned empty", candidates=[])
+            parsed = self._parse_json_payload(text)
+            result = CandidateDiscoveryResult.model_validate(parsed)
+            return self._assign_candidate_ids(result)
+        except Exception:
+            return CandidateDiscoveryResult(reasoning_summary="native web search unavailable", candidates=[])
 
-    def _compare_prompt(
+    def _discover_candidates_via_fallback_web_context(
         self,
         *,
+        thread_id: str,
         dossier: dict[str, Any],
-        left_option: dict[str, Any],
-        right_option: dict[str, Any],
-    ) -> str:
-        return self.promptpacks.render(
-            "compare_generator",
-            dossier=dossier,
-            left_option=left_option,
-            right_option=right_option,
-        )
+        user_message: str,
+        retrieved_knowledge: dict[str, Any],
+    ) -> CandidateDiscoveryResult:
+        if self._client is None or not retrieved_knowledge.get("web_results"):
+            return CandidateDiscoveryResult(reasoning_summary="no web context", candidates=[])
+        messages = [
+            {
+                "role": "system",
+                    "content": (
+                        "你是高考志愿助手的开放检索候选发现层。"
+                        "请根据 dossier、已发布知识摘要和网页检索结果，抽取值得进入 recommendation 的候选。"
+                        "只输出 JSON，对象键为 reasoning_summary 和 candidates。"
+                    ),
+                },
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "thread_id": thread_id,
+                        "dossier": dossier,
+                        "user_message": user_message,
+                        "retrieved_knowledge": retrieved_knowledge,
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        ]
+        result = self._json_chat(messages, CandidateDiscoveryResult, model=self.deepthink_model, max_tokens=1200, temperature=0.2)
+        if not result:
+            return CandidateDiscoveryResult(reasoning_summary="web fallback unavailable", candidates=[])
+        return self._assign_candidate_ids(result)
 
-    def _family_summary_prompt(
+    def _assign_candidate_ids(self, result: CandidateDiscoveryResult) -> CandidateDiscoveryResult:
+        normalized: list[DiscoveredCandidate] = []
+        for candidate in result.candidates:
+            school_slug = self._slug(candidate.school_name or "unknown-school")
+            program_slug = self._slug(candidate.program_name or "unknown-program")
+            source_url = candidate.source_urls[0] if candidate.source_urls else ""
+            digest = hashlib.sha1(f"{school_slug}:{program_slug}:{source_url}".encode("utf-8")).hexdigest()[:10]
+            source_id = f"web-src-{digest}"
+            source_domain = self._source_domain(source_url)
+            source_title = f"{candidate.school_name} {candidate.program_name}".strip()
+            normalized.append(
+                candidate.model_copy(
+                    update={
+                        "school_id": candidate.school_id or f"web-school-{school_slug}",
+                        "program_id": candidate.program_id or f"web-{school_slug}-{program_slug}-{digest}",
+                        "source_ids": candidate.source_ids or [source_id],
+                        "source_summaries": candidate.source_summaries
+                        or [
+                            {
+                                "source_id": source_id,
+                                "kind": "web_evidence",
+                                "title": source_title,
+                                "summary": candidate.evidence_summary,
+                                "url": source_url,
+                                "domain": source_domain,
+                            }
+                        ],
+                        "retrieval_score": candidate.retrieval_score or 0.32,
+                    }
+                )
+            )
+        return CandidateDiscoveryResult(reasoning_summary=result.reasoning_summary, candidates=normalized)
+
+    def _json_chat(
         self,
+        messages: list[dict[str, Any]],
+        schema: type[BaseModel] | type[dict],
         *,
-        dossier: dict[str, Any],
-        recommendation: dict[str, Any],
-    ) -> str:
-        return self.promptpacks.render(
-            "family_summary_writer",
-            dossier=dossier,
-            recommendation=recommendation,
+        model: str,
+        max_tokens: int,
+        temperature: float,
+    ):
+        if self._client is None:
+            return None
+        completion = self._client.chat.completions.create(
+            model=model,
+            messages=messages,
+            max_completion_tokens=max_tokens,
+            temperature=temperature,
+            top_p=0.9,
+            stream=False,
+            response_format={"type": "json_object"},
         )
+        raw_content = completion.choices[0].message.content or "{}"
+        try:
+            parsed = self._parse_json_payload(raw_content)
+            if schema is dict:
+                return parsed
+            return schema.model_validate(parsed)
+        except (json.JSONDecodeError, ValidationError):
+            return None
 
-    def _fallback_retrieval_plan(self, *, dossier: dict[str, Any], user_message: str) -> RetrievalPlan:
+    def _fallback_retrieval_plan(self, dossier: dict[str, Any]) -> RetrievalPlan:
         queries = self._build_safe_external_queries(dossier)
         return RetrievalPlan(queries=queries)
 
@@ -667,18 +746,12 @@ class ArkCodingPlanClient:
         safe_queries = self._build_safe_external_queries(dossier)
         if not safe_queries:
             return []
-
         allowed_tokens = {token.lower() for token in self._allowed_external_tokens(dossier)}
         sanitized: list[str] = []
         for query in queries:
-            normalized = " ".join(
-                token
-                for token in query.split()
-                if token.lower() in allowed_tokens
-            ).strip()
+            normalized = " ".join(token for token in query.split() if token.lower() in allowed_tokens).strip()
             if normalized and normalized not in sanitized:
                 sanitized.append(normalized)
-
         merged: list[str] = []
         for query in [*sanitized, *safe_queries]:
             if query and query not in merged:
@@ -691,27 +764,17 @@ class ArkCodingPlanClient:
         interests = [self._major_interest_label(value) for value in dossier.get("major_interests") or []]
         subjects = [self._subject_label(value) for value in dossier.get("subject_combination") or []]
         queries: list[str] = []
-
         base_parts = [part for part in [province, year, "高考", "志愿", "招生"] if part]
         if base_parts:
             queries.append(" ".join(base_parts))
-
         if interests:
             queries.append(" ".join([part for part in [province, year, interests[0], "专业", "选科要求"] if part]))
-
         if subjects:
             queries.append(" ".join([part for part in [province, year, " ".join(subjects[:2]), "招生", "专业"] if part]))
-
         return [query for query in queries if query]
 
     def _allowed_external_tokens(self, dossier: dict[str, Any]) -> list[str]:
-        tokens = [
-            "高考",
-            "志愿",
-            "招生",
-            "专业",
-            "选科要求",
-        ]
+        tokens = ["高考", "志愿", "招生", "专业", "选科要求"]
         if dossier.get("province"):
             tokens.extend([str(dossier["province"]), self._display_label(str(dossier["province"]))])
         if dossier.get("target_year"):
@@ -754,6 +817,28 @@ class ArkCodingPlanClient:
             "geography": "地理",
         }
         return mapping.get(value, value)
+
+    def _source_domain(self, url: str) -> str:
+        return urlparse(url).netloc.lower()
+
+    def _slug(self, value: str) -> str:
+        lowered = value.lower().strip()
+        lowered = re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "-", lowered)
+        lowered = lowered.strip("-")
+        return lowered or "unknown"
+
+    def _response_output_text(self, response: Any) -> str:
+        output_text = getattr(response, "output_text", "") or ""
+        if output_text:
+            return output_text
+        output = getattr(response, "output", []) or []
+        chunks: list[str] = []
+        for item in output:
+            for content in getattr(item, "content", []) or []:
+                text = getattr(content, "text", None)
+                if text:
+                    chunks.append(text)
+        return "".join(chunks)
 
     def _parse_json_payload(self, raw_content: str) -> dict[str, Any]:
         normalized = raw_content.strip()

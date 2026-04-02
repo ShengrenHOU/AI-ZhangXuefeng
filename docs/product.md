@@ -2,18 +2,27 @@
 
 ## Goal
 
-Help ordinary families make safer gaokao application decisions through dialogue, clear constraints, and traceable evidence.
+Help ordinary Chinese families make safer gaokao application decisions through
+natural conversation, model-led judgment, and governed knowledge.
 
 ## Primary User Experience
 
-- the user starts with a natural-language description
-- the assistant progressively builds a student dossier
-- once enough information is collected, the assistant produces a shortlist grouped into `reach`, `match`, and `safe`
-- the user can compare options, inspect sources, and export a family summary
+- the user starts by talking naturally
+- the assistant updates dossier memory without forcing form-like language
+- the assistant may give directional guidance before the dossier is fully complete
+- formal recommendations, comparisons, and refinements happen inside the same chat flow
+- sources remain hidden by default and expand only when the user asks for basis
+
+## Product Surface
+
+- one formal entry: the chat page
+- a lightweight task trace is visible during work
+- a current recommendation rail remains visible
+- compare and source drill-down remain available, but not as primary product entry points
 
 ## Product Non-Goals
 
 - no guarantee-style admission claims
-- no free-form web search in the online recommendation path
+- no rule-first recommendation engine as the main product logic
 - no multi-province support in phase 1
-
+- no tool-dashboard-first experience

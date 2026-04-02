@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+from typing import Any
+from queue import Queue
+from threading import Thread
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -53,6 +56,17 @@ state_machine = SessionStateMachine(
 )
 session_repo = SessionRepository()
 feedback_repo = FeedbackRepository()
+
+
+def _resolve_persisted_recommendation(existing_recommendation: dict[str, Any] | None, result: dict[str, Any]) -> dict[str, Any] | None:
+    if result.get("clear_recommendation"):
+        return None
+    recommendation = result.get("recommendation")
+    return recommendation if recommendation is not None else existing_recommendation
+
+
+def _stream_failure_message() -> str:
+    return "刚才这一轮处理出了点问题，我先不乱给结论。你直接重发一次，或者换一种更短的说法，我马上继续。"
 
 
 @app.get("/healthz")
@@ -116,6 +130,7 @@ def send_message(thread_id: str, payload: ChatMessageRequest) -> ChatMessageResp
         "task_timeline": existing.task_timeline,
     }
     result = state_machine.handle_message(state, payload.content)
+    persisted_recommendation = _resolve_persisted_recommendation(existing.recommendation, result)
     session_repo.update(
         thread_id,
         result["state"],
@@ -123,10 +138,11 @@ def send_message(thread_id: str, payload: ChatMessageRequest) -> ChatMessageResp
         state["messages"],
         pending_recommendation_confirmation=result["pending_recommendation_confirmation"],
         field_provenance=result["field_provenance"],
-        recommendation=result["recommendation"] if result["recommendation"] is not None else existing.recommendation,
+        recommendation=persisted_recommendation,
         recommendation_fingerprint=result["recommendation_fingerprint"],
         recommendation_versions=result["recommendation_versions"],
         task_timeline=result["task_timeline"],
+        clear_recommendation=bool(result.get("clear_recommendation")),
     )
 
     return ChatMessageResponse(
@@ -138,7 +154,7 @@ def send_message(thread_id: str, payload: ChatMessageRequest) -> ChatMessageResp
         readiness=result["readiness"],
         pending_recommendation_confirmation=result["pending_recommendation_confirmation"],
         field_provenance=result["field_provenance"],
-        recommendation=result["recommendation"] if result["recommendation"] is not None else existing.recommendation,
+        recommendation=persisted_recommendation,
         recommendation_versions=result["recommendation_versions"],
         task_timeline=result["task_timeline"],
     )
@@ -190,26 +206,77 @@ def stream_message(thread_id: str, payload: ChatMessageRequest) -> StreamingResp
         "task_timeline": existing.task_timeline,
     }
 
-    result = state_machine.handle_message(state, payload.content)
-    persisted_recommendation = result["recommendation"] if result["recommendation"] is not None else existing.recommendation
-
-    session_repo.update(
-        thread_id,
-        result["state"],
-        result["dossier"],
-        state["messages"],
-        pending_recommendation_confirmation=result["pending_recommendation_confirmation"],
-        field_provenance=result["field_provenance"],
-        recommendation=persisted_recommendation,
-        recommendation_fingerprint=result["recommendation_fingerprint"],
-        recommendation_versions=result["recommendation_versions"],
-        task_timeline=result["task_timeline"],
-    )
-
     def event_stream():
+        queue: Queue[tuple[str, dict[str, object]] | tuple[str, dict[str, object], dict | None] | tuple[str, dict[str, object], Exception]] = Queue()
+
+        def emit(event: str, payload: dict[str, object]) -> None:
+            queue.put((event, payload))
+
+        def worker() -> None:
+            try:
+                result = state_machine.handle_message(state, payload.content, emit=emit)
+                persisted_recommendation = _resolve_persisted_recommendation(existing.recommendation, result)
+                session_repo.update(
+                    thread_id,
+                    result["state"],
+                    result["dossier"],
+                    state["messages"],
+                    pending_recommendation_confirmation=result["pending_recommendation_confirmation"],
+                    field_provenance=result["field_provenance"],
+                    recommendation=persisted_recommendation,
+                    recommendation_fingerprint=result["recommendation_fingerprint"],
+                    recommendation_versions=result["recommendation_versions"],
+                    task_timeline=result["task_timeline"],
+                    clear_recommendation=bool(result.get("clear_recommendation")),
+                )
+                queue.put(("__done__", result, persisted_recommendation))
+            except Exception as exc:
+                queue.put(("__error__", {"message": _stream_failure_message()}, exc))
+
+        Thread(target=worker).start()
+
         yield _sse_event("status", {"message": "正在理解你的意图"})
-        for step in result["task_timeline"]:
-            yield _sse_event("task_step", step)
+
+        result = None
+        persisted_recommendation = None
+        while True:
+            item = queue.get()
+            if item[0] == "__done__":
+                result = item[1]
+                persisted_recommendation = item[2]
+                break
+            if item[0] == "__error__":
+                failure_message = item[1]["message"]
+                yield _sse_event("status", {"message": failure_message})
+                yield _sse_event(
+                    "final_message",
+                    {
+                        "thread_id": thread_id,
+                        "state": existing.state,
+                        "assistant_message": failure_message,
+                        "dossier": existing.dossier,
+                        "readiness": state_machine.evaluate_dossier(StudentDossier(**existing.dossier)),
+                        "pending_recommendation_confirmation": existing.pending_recommendation_confirmation,
+                        "field_provenance": existing.field_provenance,
+                        "recommendation": existing.recommendation,
+                        "recommendation_versions": existing.recommendation_versions,
+                        "task_timeline": existing.task_timeline,
+                        "model_action": {
+                            "action": "refuse",
+                            "dossierPatch": {},
+                            "nextQuestion": None,
+                            "reasoningSummary": "runtime failure",
+                            "sourceIds": [],
+                            "readiness": state_machine.evaluate_dossier(StudentDossier(**existing.dossier)),
+                        },
+                    },
+                )
+                return
+            yield _sse_event(item[0], item[1])
+
+        if result is None:
+            return
+
         if result["model_action"]["action"] == "directional_guidance":
             yield _sse_event(
                 "directional_guidance",
@@ -219,9 +286,11 @@ def stream_message(thread_id: str, payload: ChatMessageRequest) -> StreamingResp
                 },
             )
         if result["model_action"]["action"] in {"recommend", "refine_recommendation", "explain_results"} and persisted_recommendation:
+            yield _sse_event("status", {"message": "正在生成正式建议"})
             for chunk in _stream_recommendation_text(result["dossier"], payload.content):
                 yield _sse_event("assistant_delta", {"delta": chunk})
         elif result["model_action"]["action"] == "compare_options":
+            yield _sse_event("status", {"message": "正在比较候选方案"})
             for chunk in _chunk_text(result["assistant_message"]):
                 yield _sse_event("compare_delta", {"delta": chunk})
         if persisted_recommendation:
