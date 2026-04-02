@@ -13,6 +13,7 @@ os.environ["ENABLE_LIVE_LLM"] = "false"
 from fastapi.testclient import TestClient  # noqa: E402
 
 from knowledge_base import KnowledgeRepository  # noqa: E402
+import gaokao_api.main as api_main  # noqa: E402
 from gaokao_api.main import app  # noqa: E402
 
 
@@ -162,6 +163,49 @@ def test_stream_endpoint_recommends_immediately_when_user_explicitly_requests_re
     assert "event: assistant_delta" in body
     assert "event: recommendation_delta" in body
     assert "event: final_message" in body
+
+
+def test_rejecting_current_recommendation_clears_persisted_recommendation() -> None:
+    start = client.post("/api/session/start")
+    thread_id = start.json()["thread_id"]
+
+    first = client.post(
+        f"/api/session/{thread_id}/message",
+        json={"content": "河南，位次: 68000，physics chemistry biology，预算: 6500，想学电气，稳一点。"},
+    )
+    assert first.status_code == 200
+    assert first.json()["recommendation"] is not None
+
+    second = client.post(
+        f"/api/session/{thread_id}/message",
+        json={"content": "先别沿用这版建议，我想换个方向。"},
+    )
+    assert second.status_code == 200
+    assert second.json()["recommendation"] is None
+
+    snapshot = client.get(f"/api/session/{thread_id}")
+    assert snapshot.status_code == 200
+    assert snapshot.json()["recommendation"] is None
+    assert snapshot.json()["recommendation_versions"] == []
+
+
+def test_stream_endpoint_finishes_with_final_message_when_worker_fails(monkeypatch) -> None:
+    start = client.post("/api/session/start")
+    thread_id = start.json()["thread_id"]
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(type(api_main.state_machine), "handle_message", boom)
+    response = client.post(
+        f"/api/session/{thread_id}/stream",
+        json={"content": "河南，位次: 68000，physics chemistry biology，预算: 6500，想学电气，稳一点。"},
+    )
+
+    assert response.status_code == 200
+    body = response.text
+    assert "event: final_message" in body
+    assert "刚才这一轮处理出了点问题" in body
 
 
 def test_append_draft_discoveries_creates_jsonl_record(tmp_path) -> None:

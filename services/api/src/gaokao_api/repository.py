@@ -52,6 +52,7 @@ class SessionRepository:
         recommendation_fingerprint: str | None = None,
         recommendation_versions: list | None = None,
         task_timeline: list | None = None,
+        clear_recommendation: bool = False,
     ) -> SessionStateModel | None:
         with session_scope() as session:
             model = session.get(SessionStateModel, thread_id)
@@ -64,9 +65,12 @@ class SessionRepository:
                 model.pending_recommendation_confirmation = pending_recommendation_confirmation
             if field_provenance is not None:
                 model.field_provenance = field_provenance
-            if recommendation is not None:
+            if clear_recommendation:
+                model.recommendation = None
+                model.recommendation_fingerprint = None
+            elif recommendation is not None:
                 model.recommendation = recommendation
-            if recommendation_fingerprint is not None:
+            if not clear_recommendation and recommendation_fingerprint is not None:
                 model.recommendation_fingerprint = recommendation_fingerprint
             if recommendation_versions is not None:
                 model.recommendation_versions = recommendation_versions

@@ -182,6 +182,20 @@ def test_state_machine_preserves_confirmation_but_allows_negative_reply() -> Non
     assert second["recommendation"] is None
 
 
+def test_state_machine_marks_recommendation_clear_when_user_rejects_current_version() -> None:
+    machine = make_machine()
+    state = machine.initialize()
+    first = machine.handle_message(
+        state,
+        "河南，位次: 70000，physics chemistry biology，预算: 6000，想学电气，稳一点，不接受调剂，离家近，直接给我推荐吧。",
+    )
+    assert first["recommendation"] is not None
+
+    second = machine.handle_message(state, "先别沿用这版建议，我想换个方向。")
+    assert second["recommendation"] is None
+    assert second["clear_recommendation"] is True
+
+
 def test_state_machine_does_not_misread_negative_reply_as_affirmation() -> None:
     machine = make_machine()
     state = machine.initialize()

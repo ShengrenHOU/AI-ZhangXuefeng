@@ -563,6 +563,27 @@ class ArkCodingPlanClient:
         )
         return rewrite.strip() if rewrite else draft_output
 
+    def _chat_text(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        max_completion_tokens: int,
+        temperature: float,
+    ) -> str | None:
+        if self._client is None:
+            return None
+        completion = self._client.chat.completions.create(
+            model=model,
+            messages=messages,
+            max_completion_tokens=max_completion_tokens,
+            temperature=temperature,
+            top_p=0.9,
+            stream=False,
+        )
+        content = completion.choices[0].message.content
+        return content.strip() if content else None
+
     def _discover_candidates_via_native_web_search(
         self,
         *,

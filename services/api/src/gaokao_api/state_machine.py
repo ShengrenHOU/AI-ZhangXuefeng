@@ -77,6 +77,8 @@ NEGATIVE_RECOMMENDATION_SIGNALS = {
     "还要补充",
     "先别推荐",
     "先修改",
+    "先别沿用",
+    "先别用这版",
     "not yet",
 }
 
@@ -195,6 +197,7 @@ class SessionStateMachine:
         self._record_task_step(task_timeline, "update_memory", "completed", "正在更新学生档案", emit=emit)
 
         recommendation = None
+        clear_recommendation = False
         next_question: str | None = None
         reasoning_summary_override: str | None = None
         compare_pair = self._resolve_compare_pair(content, cached_recommendation)
@@ -228,6 +231,7 @@ class SessionStateMachine:
             cached_recommendation = None
             cached_recommendation_fingerprint = None
             recommendation_versions = []
+            clear_recommendation = True
         elif pending_recommendation_confirmation and readiness["can_recommend"] and self._is_affirmation(content):
             if self._has_confirmation_relevant_change(original_dossier, dossier):
                 action = "confirm_constraints"
@@ -357,6 +361,7 @@ class SessionStateMachine:
         state["pending_recommendation_confirmation"] = pending_recommendation_confirmation
         state["field_provenance"] = field_provenance
         state["recommendation"] = recommendation if recommendation is not None else cached_recommendation
+        state["clear_recommendation"] = clear_recommendation
         state["recommendation_versions"] = recommendation_versions
         state["task_timeline"] = task_timeline
 
@@ -380,6 +385,7 @@ class SessionStateMachine:
                 "readiness": readiness,
             },
             "recommendation": recommendation if recommendation is not None else cached_recommendation,
+            "clear_recommendation": clear_recommendation,
         }
 
     def evaluate_dossier(self, dossier: StudentDossier) -> dict[str, Any]:
